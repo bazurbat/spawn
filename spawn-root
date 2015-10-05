@@ -16,9 +16,6 @@ else
     try_source "$HOME/.config/$program_name/env"
 fi
 
-as_root=''
-use_user=1
-
 spawn_args=''
 root_command=''
 
@@ -34,8 +31,7 @@ while [ $# -gt 0 ]; do
             -n|--name)
                 root_name="$2"; shift ;;
             -r|--as-root)
-                as_root=1
-                use_user='' ;;
+                root_user='root' ;;
             --bind-home)
                 bind_home=1 ;;
             --with-ssh-agent)
@@ -73,9 +69,15 @@ OPTIONS:
 EOF
 }
 
+die() {
+    local status=$?
+    [ $status = 0 ] && status=2
+    [ $# = 0 ] || echo Error: $*
+    exit $status
+}
+
 if [ -z "$root_name" ]; then
-    show_help
-    exit 0
+    die "no root name specified"
 fi
 
 root_dir="$base_dir/$root_name"
@@ -87,18 +89,6 @@ fi
 if [ -z "$nspawn" -a -z "$(command -v realpath)" ]; then
     die "realpath command was not found in PATH, can not continue"
 fi
-
-
-message() {
-    echo $*
-}
-
-die() {
-    local status=$?
-    [ $status = 0 ] && status=2
-    [ $# = 0 ] || echo Error: $*
-    exit $status
-}
 
 su_run() {
     if [ "$UID" -eq 0 ]; then
@@ -202,8 +192,7 @@ spawn_root_systemd() {
 
     if [ "$use_desktop" ]; then
         $_nspawn --directory="$root_dir" \
-            ${share_system:+--share-system} \
-            ${use_user:+--user=$root_user} \
+            --user=$root_user \
             ${DISPLAY:+--bind=/tmp/.X11-unix} \
             ${DISPLAY:+--setenv=DISPLAY=$DISPLAY} \
             ${DISPLAY:+--setenv=XAUTHORITY="$root_xauth"} \
@@ -213,8 +202,7 @@ spawn_root_systemd() {
             ${spawn_args} ${root_command}
     else
         $_nspawn --directory="$root_dir" \
-            ${share_system:+--share-system} \
-            ${use_user:+--user=$root_user} \
+            --user=$root_user \
             ${_ssh_agent} \
             ${spawn_args} ${root_command}
     fi
@@ -225,7 +213,7 @@ spawn_root_chroot() {
     : ${root_user:?}
     : ${root_home:?}
 
-    if [ "$as_root" ]; then
+    if [ "$root_user" = 'root' ]; then
         _userspec="0:0"
     else
         _userspec="$USER:users"
@@ -241,7 +229,7 @@ if [ "$umount_only" ]; then
     exit
 fi
 
-if [ "$as_root" ]; then
+if [ "$root_user" = 'root' ]; then
     root_home="/root"
 else
     root_home="/home/$root_user"
