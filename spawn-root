@@ -1,8 +1,17 @@
 #!/bin/sh
 
-root_base_dir="/usr/local/root"
-
 set -e
+
+program_name="spawn-root"
+base_dir="/usr/local/root"
+
+try_source() { [ -f "$1" ] && . "$1" || :; }
+
+if [ "$XDG_CONFIG_HOME" ]; then
+    try_source "$XDG_CONFIG_HOME/$program_name/env"
+else
+    try_source "$HOME/.config/$program_name/env"
+fi
 
 show_help() {
     cat <<EOF
@@ -12,7 +21,7 @@ Usage: spawn-root -n <name> [OPTIONS] [COMMAND]
 
 OPTIONS:
 
-  -n		Name of root inside '$root_base_dir'
+  -n		Name of root inside '$base_dir'
   -c		Use chroot.
   -r		Use superuser account inside the container.
   --umount	Unmount previously mounted filesystems.
@@ -216,7 +225,7 @@ if [ -z "$root_name" ]; then
     exit 0
 fi
 
-root_dir="$root_base_dir/$root_name"
+root_dir="$base_dir/$root_name"
 
 if [ ! -d "$root_dir" ]; then
     die "root directory '$root_dir' is not exists"
