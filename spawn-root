@@ -1,0 +1,257 @@
+#!/bin/sh
+
+root_base_dir="/usr/local/root"
+
+set -e
+
+show_help() {
+    cat <<EOF
+Usage: spawn-root -n <name> [OPTIONS] [COMMAND]
+
+  Spawns new container or chroot and configures shared environment.
+
+OPTIONS:
+
+  -n		Name of root inside '$root_base_dir'
+  -c		Use chroot.
+  -r		Use superuser account inside the container.
+  --umount	Unmount previously mounted filesystems.
+  --bind-host	Bind mount host filesystem.
+  --bind-root	Bind mount sibling roots.
+
+EOF
+}
+
+message() {
+    echo $*
+}
+
+die() {
+    local status=$?
+    [ $status = 0 ] && status=2
+    [ $# = 0 ] || echo Error: $*
+    exit $status
+}
+
+su_run() {
+    if [ "$UID" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+link_mtab() {
+    : ${root_dir:?}
+
+    if [ ! -h "$root_dir/etc/mtab" ]; then
+        su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
+            die "failed to link mtab"
+    fi
+}
+
+copy_resolv_conf() {
+    : ${root_dir:?}
+
+    su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
+        die "failed to copy resolv.conf"
+}
+
+extract_xauth() {
+    : ${root_dir:?}
+    : ${root_xauth:?}
+    : ${DISPLAY:?}
+
+    rm -f "$root_dir/$root_xauth"
+    xauth extract "$root_dir/$root_xauth" "$DISPLAY" ||
+        die "failed to extract xauth"
+}
+
+copy_pulse_cookie() {
+    : ${root_dir:?}
+    : ${root_home:?}
+
+    mkdir -p "$root_dir/$root_home/.config/pulse"
+    cp -f "/home/$USER/.config/pulse/cookie" \
+        "$root_dir/$root_home/.config/pulse/cookie"
+}
+
+mount_filesystems() {
+    : ${root_dir:?}
+
+    su_run mkdir -p "$root_dir/proc"
+    su_run mount -t proc proc "$root_dir/proc"
+
+    su_run mkdir -p "$root_dir/sys"
+    su_run mount --rbind /sys "$root_dir/sys"
+    su_run mount --make-rslave "$root_dir/sys"
+
+    su_run mkdir -p "$root_dir/dev"
+    su_run mount --rbind /dev "$root_dir/dev"
+    su_run mount --make-rslave "$root_dir/dev"
+
+    if [ "$bind_home" ]; then
+        su_run mount --bind "$HOME" "$root_dir/$root_home"
+    else
+        if [ "$with_x11" ]; then
+            [ "$DISPLAY" ] || die "DISPLAY is not set"
+
+            su_run mkdir -p "$root_dir/tmp/.X11-unix"
+            su_run mount --bind /tmp/.X11-unix "$root_dir/tmp/.X11-unix"
+        fi
+
+        if [ "$with_pulseaudio" ]; then
+            [ -d "/run/user/$UID/pulse" ] ||
+                die "Pulseaudio runtime directory is not exists"
+
+            su_run mkdir -p "$root_dir/run/pulse"
+            su_run mount --bind /run/user/$UID/pulse "$root_dir/run/pulse"
+        fi
+    fi
+}
+
+unmount_filesystems() {
+    : ${root_dir:?}
+
+    local root=$(realpath "$root_dir")
+
+    for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
+    do
+        su_run umount "$mp" || true
+    done
+}
+
+spawn_root_systemd() {
+    : ${root_dir:?}
+    : ${root_user:?}
+
+    local _nspawn='su_run systemd-nspawn --personality=x86'
+    local _ssh_agent=''
+
+    if [ "$with_ssh_agent" -a "$SSH_AUTH_SOCK" ]; then
+        _ssh_agent="--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK \
+            --bind=$SSH_AUTH_SOCK"
+    fi
+
+    if [ "$use_desktop" ]; then
+        $_nspawn --directory="$root_dir" \
+            ${share_system:+--share-system} \
+            ${use_user:+--user=$root_user} \
+            ${DISPLAY:+--bind=/tmp/.X11-unix} \
+            ${DISPLAY:+--setenv=DISPLAY=$DISPLAY} \
+            ${DISPLAY:+--setenv=XAUTHORITY="$root_xauth"} \
+            --bind=/run/dbus \
+            --bind=/run/user/$UID/pulse:/run/pulse \
+            --setenv=PULSE_SERVER=/run/pulse/native \
+            ${spawn_args} ${root_command}
+    else
+        $_nspawn --directory="$root_dir" \
+            ${share_system:+--share-system} \
+            ${use_user:+--user=$root_user} \
+            ${_ssh_agent} \
+            ${spawn_args} ${root_command}
+    fi
+}
+
+spawn_root_chroot() {
+    : ${root_dir:?}
+    : ${root_user:?}
+    : ${root_home:?}
+
+    if [ "$as_root" ]; then
+        _userspec="0:0"
+    else
+        _userspec="$USER:users"
+    fi
+
+    su_run linux32 env - HOME="$root_home" TERM="$TERM" \
+        chroot --userspec="$_userspec" "$root_dir" \
+        ${root_command:-/bin/bash --login}
+}
+
+as_root=''
+use_user=1
+
+root_user='user'
+root_xauth="/tmp/xauth"
+
+spawn_args=''
+root_command=''
+
+while [ $# -gt 0 ]; do
+    if [ "$arg_flag" ]; then
+        root_command="$root_command$1 "
+    else
+        case $1 in
+            --)
+                arg_flag=1 ;;
+            --nspawn)
+                nspawn=1 ;;
+            -n|--name)
+                root_name="$2"; shift ;;
+            -r|--as-root)
+                as_root=1
+                use_user='' ;;
+            --bind-home)
+                bind_home=1 ;;
+            --with-ssh-agent)
+                with_ssh_agent=1 ;;
+            --with-x11)
+                with_x11=1 ;;
+            --with-pulseaudio)
+                with_pulseaudio=1 ;;
+            --desktop)
+                use_desktop=1 ;;
+            --umount)
+                umount_only=1 ;;
+            *)
+                spawn_args="$spawn_args$1 " ;;
+        esac
+    fi
+    shift
+done
+
+if [ -z "$root_name" ]; then
+    show_help
+    exit 0
+fi
+
+root_dir="$root_base_dir/$root_name"
+
+if [ ! -d "$root_dir" ]; then
+    die "root directory '$root_dir' is not exists"
+fi
+
+if [ -z "$nspawn" -a -z "$(command -v realpath)" ]; then
+    die "realpath command was not found in PATH, can not continue"
+fi
+
+if [ "$umount_only" ]; then
+    unmount_filesystems
+    exit
+fi
+
+if [ "$as_root" ]; then
+    root_home="/root"
+else
+    root_home="/home/$root_user"
+fi
+
+link_mtab
+copy_resolv_conf
+
+if [ "$with_x11" ]; then
+    extract_xauth
+fi
+
+if [ "$with_pulseaudio" ]; then
+    copy_pulse_cookie
+fi
+
+if [ "$nspawn" ]; then
+    spawn_root_systemd
+else
+    trap unmount_filesystems EXIT
+    mount_filesystems
+    spawn_root_chroot
+fi
