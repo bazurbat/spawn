@@ -6,7 +6,9 @@ program_name="spawn-root"
 base_dir="/usr/local/root"
 
 root_user="user"
-root_xauth="/tmp/xauth"
+
+xauth_file="/tmp/xauth"
+x11_unix_dir="/tmp/.X11-unix"
 
 try_source() { [ -f "$1" ] && . "$1" || :; }
 
@@ -38,6 +40,8 @@ while [ $# -gt 0 ]; do
                 with_ssh_agent=1 ;;
             --with-x11)
                 with_x11=1 ;;
+            --with-system-bus)
+                with_system_bus=1 ;;
             --with-pulseaudio)
                 with_pulseaudio=1 ;;
             --desktop)
@@ -76,6 +80,14 @@ die() {
     exit $status
 }
 
+su_run() {
+    if [ "$UID" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 if [ -z "$root_name" ]; then
     die "no root name specified"
 fi
@@ -90,48 +102,48 @@ if [ -z "$nspawn" -a -z "$(command -v realpath)" ]; then
     die "realpath command was not found in PATH, can not continue"
 fi
 
-su_run() {
-    if [ "$UID" -eq 0 ]; then
-        "$@"
-    else
-        sudo "$@"
-    fi
-}
+if [ "$root_user" = 'root' ]; then
+    root_home="/root"
+else
+    root_home="/home/$root_user"
+fi
 
-link_mtab() {
-    : ${root_dir:?}
+if [ "$umount_only" ]; then
+    unmount_filesystems
+    exit
+fi
 
-    if [ ! -h "$root_dir/etc/mtab" ]; then
-        su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
-            die "failed to link mtab"
-    fi
-}
+if [ "$with_ssh_agent" ]; then
+    [ "$SSH_AUTH_SOCK" ] ||
+        die "SSH_AUTH_SOCK is not set"
+    [ -e "$SSH_AUTH_SOCK" ] ||
+        die "$SSH_AUTH_SOCK is not exists"
+fi
 
-copy_resolv_conf() {
-    : ${root_dir:?}
+if [ "$with_x11" ]; then
+    [ "$DISPLAY" ] ||
+        die "DISPLAY is not set"
 
-    su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
-        die "failed to copy resolv.conf"
-}
-
-extract_xauth() {
-    : ${root_dir:?}
-    : ${root_xauth:?}
-    : ${DISPLAY:?}
-
-    rm -f "$root_dir/$root_xauth"
-    xauth extract "$root_dir/$root_xauth" "$DISPLAY" ||
+    xauth extract "$root_dir/$xauth_file" "$DISPLAY" ||
         die "failed to extract xauth"
-}
+fi
 
-copy_pulse_cookie() {
-    : ${root_dir:?}
-    : ${root_home:?}
+if [ "$with_pulseaudio" ]; then
+    [ -d "/run/user/$UID/pulse" ] ||
+        die "Pulseaudio runtime directory is not exists"
 
     mkdir -p "$root_dir/$root_home/.config/pulse"
-    cp -f "/home/$USER/.config/pulse/cookie" \
+    cp -f "$HOME/.config/pulse/cookie" \
         "$root_dir/$root_home/.config/pulse/cookie"
-}
+fi
+
+if [ ! -h "$root_dir/etc/mtab" ]; then
+    su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
+        die "failed to link mtab"
+fi
+
+su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
+    die "failed to copy resolv.conf"
 
 mount_filesystems() {
     : ${root_dir:?}
@@ -151,16 +163,11 @@ mount_filesystems() {
         su_run mount --bind "$HOME" "$root_dir/$root_home"
     else
         if [ "$with_x11" ]; then
-            [ "$DISPLAY" ] || die "DISPLAY is not set"
-
             su_run mkdir -p "$root_dir/tmp/.X11-unix"
             su_run mount --bind /tmp/.X11-unix "$root_dir/tmp/.X11-unix"
         fi
 
         if [ "$with_pulseaudio" ]; then
-            [ -d "/run/user/$UID/pulse" ] ||
-                die "Pulseaudio runtime directory is not exists"
-
             su_run mkdir -p "$root_dir/run/pulse"
             su_run mount --bind /run/user/$UID/pulse "$root_dir/run/pulse"
         fi
@@ -176,36 +183,6 @@ unmount_filesystems() {
     do
         su_run umount "$mp" || true
     done
-}
-
-spawn_root_systemd() {
-    : ${root_dir:?}
-    : ${root_user:?}
-
-    local _nspawn='su_run systemd-nspawn --personality=x86'
-    local _ssh_agent=''
-
-    if [ "$with_ssh_agent" -a "$SSH_AUTH_SOCK" ]; then
-        _ssh_agent="--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK \
-            --bind=$SSH_AUTH_SOCK"
-    fi
-
-    if [ "$use_desktop" ]; then
-        $_nspawn --directory="$root_dir" \
-            --user=$root_user \
-            ${DISPLAY:+--bind=/tmp/.X11-unix} \
-            ${DISPLAY:+--setenv=DISPLAY=$DISPLAY} \
-            ${DISPLAY:+--setenv=XAUTHORITY="$root_xauth"} \
-            --bind=/run/dbus \
-            --bind=/run/user/$UID/pulse:/run/pulse \
-            --setenv=PULSE_SERVER=/run/pulse/native \
-            ${spawn_args} ${root_command}
-    else
-        $_nspawn --directory="$root_dir" \
-            --user=$root_user \
-            ${_ssh_agent} \
-            ${spawn_args} ${root_command}
-    fi
 }
 
 spawn_root_chroot() {
@@ -224,27 +201,43 @@ spawn_root_chroot() {
         ${root_command:-/bin/bash --login}
 }
 
-if [ "$umount_only" ]; then
-    unmount_filesystems
-    exit
-fi
+spawn_root_systemd() {
+    : ${root_dir:?}
+    : ${root_user:?}
 
-if [ "$root_user" = 'root' ]; then
-    root_home="/root"
-else
-    root_home="/home/$root_user"
-fi
+    local nspawn='su_run systemd-nspawn --personality=x86'
 
-link_mtab
-copy_resolv_conf
+    if [ "$with_ssh_agent" ]; then
+        local ssh_agent_arg="--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK \
+            --bind=$SSH_AUTH_SOCK"
+    fi
 
-if [ "$with_x11" ]; then
-    extract_xauth
-fi
+    if [ "$with_x11" ]; then
+        local x11_arg="--setenv=DISPLAY=$DISPLAY \
+            --setenv=XAUTHORITY=$xauth_file \
+            --bind=$x11_unix_dir"
+    fi
 
-if [ "$with_pulseaudio" ]; then
-    copy_pulse_cookie
-fi
+    if [ "$with_system_bus" ]; then
+        local system_bus_arg="--bind=/run/dbus"
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        local pulseaudio_arg="--setenv=PULSE_SERVER=/run/pulse/native \
+            --bind=/run/user/$UID/pulse:/run/pulse"
+    fi
+
+    local qt_arg="--setenv=QT_X11_NO_MITSHM=1"
+
+    $nspawn --directory="$root_dir" \
+        --user=$root_user \
+        $ssh_agent_arg \
+        $x11_arg ${x11_arg:+$qt_arg} \
+        $system_bus_arg \
+        $pulseaudio_arg \
+        $spawn_args \
+        $root_command
+}
 
 if [ "$nspawn" ]; then
     spawn_root_systemd
