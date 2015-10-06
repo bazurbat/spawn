@@ -12,13 +12,19 @@ x11_unix_dir="/tmp/.X11-unix"
 
 try_source() { [ -f "$1" ] && . "$1" || :; }
 
+die() {
+    local status=$?
+    [ $status = 0 ] && status=2
+    [ $# = 0 ] || echo Error: $*
+    exit $status
+}
+
 if [ "$XDG_CONFIG_HOME" ]; then
     try_source "$XDG_CONFIG_HOME/$program_name/env"
 else
     try_source "$HOME/.config/$program_name/env"
 fi
 
-spawn_args=''
 root_command=''
 
 while [ $# -gt 0 ]; do
@@ -49,7 +55,7 @@ while [ $# -gt 0 ]; do
             --umount)
                 umount_only=1 ;;
             *)
-                spawn_args="$spawn_args$1 " ;;
+                die "unknown argument: $1" ;;
         esac
     fi
     shift
@@ -71,13 +77,6 @@ OPTIONS:
   --bind-root	Bind mount sibling roots.
 
 EOF
-}
-
-die() {
-    local status=$?
-    [ $status = 0 ] && status=2
-    [ $# = 0 ] || echo Error: $*
-    exit $status
 }
 
 su_run() {
@@ -235,7 +234,6 @@ spawn_root_systemd() {
         $x11_arg ${x11_arg:+$qt_arg} \
         $system_bus_arg \
         $pulseaudio_arg \
-        $spawn_args \
         $root_command
 }
 
