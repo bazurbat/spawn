@@ -54,6 +54,8 @@ su_run() {
 }
 
 mount_filesystems() {
+    local ssh_sock_dir
+
     : ${root_dir:?}
 
     su_run mkdir -p "$root_dir/proc"           || die
@@ -72,8 +74,9 @@ mount_filesystems() {
     fi
 
     if [ "$with_ssh_agent" ]; then
-        su_run mkdir -p "$root_dir/$SSH_AUTH_SOCK" || die
-        su_run mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK" || die
+        ssh_sock_dir=$(dirname "$SSH_AUTH_SOCK")
+        su_run mkdir -p "$root_dir/$ssh_sock_dir" || die
+        su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
     fi
 
     if [ "$with_x11" ]; then
@@ -112,6 +115,7 @@ spawn_root_chroot() {
     fi
 
     su_run linux32 env - HOME="$root_home" TERM="$TERM" \
+        ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
         chroot --userspec="$userspec" "$root_dir" \
         ${root_command:-/bin/bash --login}
 }
@@ -208,12 +212,14 @@ if [ ! -d "$root_dir" ]; then
 fi
 
 if [ -z "$nspawn" ]; then
+    [ "$(command -v dirname)" ] ||
+        die "dirname command was not found"
     [ "$(command -v realpath)" ] ||
-        die "realpath command was not found in PATH"
+        die "realpath command was not found"
     [ "$(command -v awk)" ] ||
-        die "awk command was not found in PATH"
+        die "awk command was not found"
     [ "$(command -v tac)" ] ||
-        die "tac command was not found in PATH"
+        die "tac command was not found"
 fi
 
 if [ "$root_user" = 'root' ]; then
