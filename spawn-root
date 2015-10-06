@@ -124,7 +124,7 @@ if [ "$with_x11" ]; then
         die "DISPLAY is not set"
 
     xauth extract "$root_dir/$xauth_file" "$DISPLAY" ||
-        die "failed to extract xauth"
+        die "failed to extract X authorization entries"
 fi
 
 if [ "$with_pulseaudio" ]; then
