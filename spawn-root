@@ -1,7 +1,5 @@
 #!/bin/sh
 
-set -e
-
 program_name="spawn-root"
 base_dir="/usr/local/root"
 
@@ -9,6 +7,9 @@ root_user="user"
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
+pulseaudio_dir="/run/pulse"
+
+S=$(printf '\t')
 
 try_source() { [ -f "$1" ] && . "$1" || :; }
 
@@ -18,48 +19,6 @@ die() {
     [ $# = 0 ] || echo Error: $*
     exit $status
 }
-
-if [ "$XDG_CONFIG_HOME" ]; then
-    try_source "$XDG_CONFIG_HOME/$program_name/env"
-else
-    try_source "$HOME/.config/$program_name/env"
-fi
-
-root_command=''
-
-while [ $# -gt 0 ]; do
-    if [ "$arg_flag" ]; then
-        root_command="$root_command$1 "
-    else
-        case $1 in
-            --)
-                arg_flag=1 ;;
-            --nspawn)
-                nspawn=1 ;;
-            -n|--name)
-                root_name="$2"; shift ;;
-            -r|--as-root)
-                root_user='root' ;;
-            --bind-home)
-                bind_home=1 ;;
-            --with-ssh-agent)
-                with_ssh_agent=1 ;;
-            --with-x11)
-                with_x11=1 ;;
-            --with-system-bus)
-                with_system_bus=1 ;;
-            --with-pulseaudio)
-                with_pulseaudio=1 ;;
-            --desktop)
-                use_desktop=1 ;;
-            --umount)
-                umount_only=1 ;;
-            *)
-                die "unknown argument: $1" ;;
-        esac
-    fi
-    shift
-done
 
 show_help() {
     cat <<EOF
@@ -80,12 +39,150 @@ EOF
 }
 
 su_run() {
-    if [ "$UID" -eq 0 ]; then
+    if [ "$UID" = "0" ]; then
         "$@"
     else
         sudo "$@"
     fi
 }
+
+mount_filesystems() {
+    : ${root_dir:?}
+
+    su_run mkdir -p "$root_dir/proc"           || die
+    su_run mount -t proc proc "$root_dir/proc" || die
+
+    su_run mkdir -p "$root_dir/sys"            || die
+    su_run mount --rbind /sys "$root_dir/sys"  || die
+    su_run mount --make-rslave "$root_dir/sys" || die
+
+    su_run mkdir -p "$root_dir/dev"            || die
+    su_run mount --rbind /dev "$root_dir/dev"  || die
+    su_run mount --make-rslave "$root_dir/dev" || die
+
+    if [ "$bind_home" ]; then
+        su_run mount --bind "$HOME" "$root_dir/$root_home"
+    fi
+
+    if [ "$with_ssh_agent" ]; then
+        su_run mkdir -p "$root_dir/$SSH_AUTH_SOCK" || die
+        su_run mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK" || die
+    fi
+
+    if [ "$with_x11" ]; then
+        su_run mkdir -p "$root_dir/$x11_unix_dir" || die
+        su_run mount --bind "$x11_unix_dir" "$root_dir/$x11_unix_dir" || die
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        su_run mkdir -p "$root_dir/$pulseaudio_dir" || die
+        su_run mount --bind /run/user/$UID/pulse "$root_dir/$pulseaudio_dir" || die
+    fi
+}
+
+unmount_filesystems() {
+    : ${root_dir:?}
+
+    local root=$(realpath "$root_dir")
+
+    for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
+    do
+        su_run umount "$mp" || true
+    done
+}
+
+spawn_root_chroot() {
+    local userspec
+
+    : ${root_dir:?}
+    : ${root_user:?}
+    : ${root_home:?}
+
+    if [ "$root_user" = 'root' ]; then
+        userspec="0:0"
+    else
+        userspec="$USER:users"
+    fi
+
+    su_run linux32 env - HOME="$root_home" TERM="$TERM" \
+        chroot --userspec="$userspec" "$root_dir" \
+        ${root_command:-/bin/bash --login}
+}
+
+spawn_root_systemd() {
+    local IFS=$(printf '\n\t')
+    local args=
+
+    : ${root_dir:?}
+    : ${root_user:?}
+
+    if [ "$with_ssh_agent" ]; then
+        args="${args}${S}--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+        args="${args}${S}--bind=$SSH_AUTH_SOCK"
+    fi
+
+    if [ "$with_x11" ]; then
+        args="${args}${S}--setenv=DISPLAY=$DISPLAY"
+        args="${args}${S}--setenv=XAUTHORITY=$xauth_file"
+        args="${args}${S}--setenv=QT_X11_NO_MITSHM=1"
+        args="${args}${S}--bind=$x11_unix_dir"
+    fi
+
+    if [ "$with_system_bus" ]; then
+        args="${args}${S}--bind=/run/dbus"
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        args="${args}${S}--setenv=PULSE_SERVER=$pulseaudio_dir/native"
+        args="${args}${S}--bind=/run/user/$UID/pulse:$pulseaudio_dir"
+    fi
+
+    su_run systemd-nspawn \
+        --directory="$root_dir" \
+        --personality=x86 \
+        --user="$root_user" \
+        $args $root_command
+}
+
+if [ "$XDG_CONFIG_HOME" ]; then
+    try_source "$XDG_CONFIG_HOME/$program_name/env"
+else
+    try_source "$HOME/.config/$program_name/env"
+fi
+
+root_command=
+
+while [ $# -gt 0 ]; do
+    if [ "$arg_flag" ]; then
+        root_command="${root_command}${S}$1"
+    else
+        case $1 in
+            --)
+                arg_flag=1 ;;
+            --nspawn)
+                nspawn=1 ;;
+            -n|--name)
+                root_name="$2"; shift ;;
+            -r|--as-root)
+                root_user='root' ;;
+            --bind-home)
+                bind_home=1 ;;
+            --with-ssh-agent)
+                with_ssh_agent=1 ;;
+            --with-x11)
+                with_x11=1 ;;
+            --with-system-bus)
+                with_system_bus=1 ;;
+            --with-pulseaudio)
+                with_pulseaudio=1 ;;
+            --umount)
+                umount_only=1 ;;
+            *)
+                die "unknown argument: $1" ;;
+        esac
+    fi
+    shift
+done
 
 if [ -z "$root_name" ]; then
     die "no root name specified"
@@ -97,8 +194,13 @@ if [ ! -d "$root_dir" ]; then
     die "root directory '$root_dir' is not exists"
 fi
 
-if [ -z "$nspawn" -a -z "$(command -v realpath)" ]; then
-    die "realpath command was not found in PATH, can not continue"
+if [ -z "$nspawn" ]; then
+    [ "$(command -v realpath)" ] ||
+        die "realpath command was not found in PATH"
+    [ "$(command -v awk)" ] ||
+        die "awk command was not found in PATH"
+    [ "$(command -v tac)" ] ||
+        die "tac command was not found in PATH"
 fi
 
 if [ "$root_user" = 'root' ]; then
@@ -143,99 +245,6 @@ fi
 
 su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
     die "failed to copy resolv.conf"
-
-mount_filesystems() {
-    : ${root_dir:?}
-
-    su_run mkdir -p "$root_dir/proc"
-    su_run mount -t proc proc "$root_dir/proc"
-
-    su_run mkdir -p "$root_dir/sys"
-    su_run mount --rbind /sys "$root_dir/sys"
-    su_run mount --make-rslave "$root_dir/sys"
-
-    su_run mkdir -p "$root_dir/dev"
-    su_run mount --rbind /dev "$root_dir/dev"
-    su_run mount --make-rslave "$root_dir/dev"
-
-    if [ "$bind_home" ]; then
-        su_run mount --bind "$HOME" "$root_dir/$root_home"
-    else
-        if [ "$with_x11" ]; then
-            su_run mkdir -p "$root_dir/tmp/.X11-unix"
-            su_run mount --bind /tmp/.X11-unix "$root_dir/tmp/.X11-unix"
-        fi
-
-        if [ "$with_pulseaudio" ]; then
-            su_run mkdir -p "$root_dir/run/pulse"
-            su_run mount --bind /run/user/$UID/pulse "$root_dir/run/pulse"
-        fi
-    fi
-}
-
-unmount_filesystems() {
-    : ${root_dir:?}
-
-    local root=$(realpath "$root_dir")
-
-    for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
-    do
-        su_run umount "$mp" || true
-    done
-}
-
-spawn_root_chroot() {
-    : ${root_dir:?}
-    : ${root_user:?}
-    : ${root_home:?}
-
-    if [ "$root_user" = 'root' ]; then
-        _userspec="0:0"
-    else
-        _userspec="$USER:users"
-    fi
-
-    su_run linux32 env - HOME="$root_home" TERM="$TERM" \
-        chroot --userspec="$_userspec" "$root_dir" \
-        ${root_command:-/bin/bash --login}
-}
-
-spawn_root_systemd() {
-    : ${root_dir:?}
-    : ${root_user:?}
-
-    local nspawn='su_run systemd-nspawn --personality=x86'
-
-    if [ "$with_ssh_agent" ]; then
-        local ssh_agent_arg="--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK \
-            --bind=$SSH_AUTH_SOCK"
-    fi
-
-    if [ "$with_x11" ]; then
-        local x11_arg="--setenv=DISPLAY=$DISPLAY \
-            --setenv=XAUTHORITY=$xauth_file \
-            --bind=$x11_unix_dir"
-    fi
-
-    if [ "$with_system_bus" ]; then
-        local system_bus_arg="--bind=/run/dbus"
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        local pulseaudio_arg="--setenv=PULSE_SERVER=/run/pulse/native \
-            --bind=/run/user/$UID/pulse:/run/pulse"
-    fi
-
-    local qt_arg="--setenv=QT_X11_NO_MITSHM=1"
-
-    $nspawn --directory="$root_dir" \
-        --user=$root_user \
-        $ssh_agent_arg \
-        $x11_arg ${x11_arg:+$qt_arg} \
-        $system_bus_arg \
-        $pulseaudio_arg \
-        $root_command
-}
 
 if [ "$nspawn" ]; then
     spawn_root_systemd
