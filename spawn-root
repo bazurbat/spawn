@@ -1,7 +1,6 @@
 #!/bin/sh
 
 program_name="spawn-root"
-base_dir="/usr/local/root"
 
 root_user="user"
 
@@ -22,14 +21,14 @@ die() {
 
 show_help() {
     cat <<EOF
-Usage: spawn-root -n <name> [OPTIONS] -- [COMMAND]
+Usage: spawn-root -d <path> [OPTIONS] -- [COMMAND]
 
   Spawns new container or chroot and configures shared environment.
 
 OPTIONS:
 
   -h|--help         Print this help message
-  -n <name>         Name of root inside '$base_dir' (required)
+  -d|--directory    A directory to use as a root filesystem
   -r|--as-root      Use superuser inside the spawned root
   --bind-home       Bind mount current user home directory inside the chroot
   --with-ssh-agent  Pass SSH_AUTH_SOCK variable and bind the socket
@@ -176,8 +175,8 @@ while [ $# -gt 0 ]; do
             --)
                 arg_flag=1 ;;
             -h|--help) show_help; exit ;;
-            -n|--name)
-                root_name="$2"; shift ;;
+            -d|--directory)
+                root_dir="$2"; shift ;;
             -r|--as-root)
                 root_user='root' ;;
             --bind-home)
@@ -201,11 +200,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-if [ -z "$root_name" ]; then
-    die "no root name specified"
+if [ -z "$root_dir" ]; then
+    die "root directory was not specified"
 fi
-
-root_dir="$base_dir/$root_name"
 
 if [ ! -d "$root_dir" ]; then
     die "root directory '$root_dir' is not exists"
