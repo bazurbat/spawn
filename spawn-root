@@ -28,12 +28,19 @@ Usage: spawn-root -n <name> [OPTIONS] -- [COMMAND]
 
 OPTIONS:
 
-  -n		Name of root inside '$base_dir'
-  -c		Use chroot.
-  -r		Use superuser account inside the container.
-  --umount	Unmount previously mounted filesystems.
-  --bind-host	Bind mount host filesystem.
-  --bind-root	Bind mount sibling roots.
+  -h|--help         Print this help message
+  -n <name>         Name of root inside '$base_dir' (required)
+  -r|--as-root      Use superuser inside the spawned root
+  --bind-home       Bind mount current user home directory inside the chroot
+  --with-ssh-agent  Pass SSH_AUTH_SOCK variable and bind the socket
+  --with-x11        Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
+  --with-pulseaudio Set PULSE_SERVER and pass Pulseaudio socket
+  --umount          Just unmount directories for the specified root name
+  --nspawn          Use systemd-nspawn instead of chroot call
+
+SYNOPSIS:
+
+  To run custom command inside the chroot pass it after --.
 
 EOF
 }
@@ -150,6 +157,11 @@ else
     try_source "$HOME/.config/$program_name/env"
 fi
 
+if [ $# = 0 ]; then
+    show_help
+    exit
+fi
+
 root_command=
 
 while [ $# -gt 0 ]; do
@@ -159,8 +171,7 @@ while [ $# -gt 0 ]; do
         case $1 in
             --)
                 arg_flag=1 ;;
-            --nspawn)
-                nspawn=1 ;;
+            -h|--help) show_help; exit ;;
             -n|--name)
                 root_name="$2"; shift ;;
             -r|--as-root)
@@ -177,6 +188,8 @@ while [ $# -gt 0 ]; do
                 with_pulseaudio=1 ;;
             --umount)
                 umount_only=1 ;;
+            --nspawn)
+                nspawn=1 ;;
             *)
                 die "unknown argument: $1" ;;
         esac
