@@ -30,6 +30,7 @@ OPTIONS:
   -h|--help         Print this help message
   -d|--directory    A directory to use as a root filesystem
   -r|--as-root      Use superuser inside the spawned root
+  --arch            Set architecture reported by uname(2)
   --bind-home       Bind mount current user home directory inside the chroot
   --with-ssh-agent  Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11        Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
@@ -101,7 +102,7 @@ unmount_filesystems() {
 }
 
 spawn_root_chroot() {
-    local userspec
+    local setarch userspec
 
     : ${root_dir:?}
     : ${root_user:?}
@@ -113,7 +114,13 @@ spawn_root_chroot() {
         userspec="$USER:users"
     fi
 
-    su_run linux32 env - HOME="$root_home" TERM="$TERM" \
+    if [ "$root_arch" = 'x86' ]; then
+        setarch='linux32'
+    else
+        setarch='linux64'
+    fi
+
+    su_run "$setarch" env - HOME="$root_home" TERM="$TERM" \
         ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
         chroot --userspec="$userspec" "$root_dir" \
         ${root_command:-/bin/bash --login}
@@ -179,6 +186,8 @@ while [ $# -gt 0 ]; do
                 root_dir="$2"; shift ;;
             -r|--as-root)
                 root_user='root' ;;
+            --arch)
+                root_arch="$2"; shift ;;
             --bind-home)
                 bind_home=1 ;;
             --with-ssh-agent)
