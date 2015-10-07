@@ -102,8 +102,7 @@ unmount_filesystems() {
 }
 
 spawn_root_chroot() {
-    local setarch userspec
-    local path
+    local userspec= path= setarch=
 
     : ${root_dir:?}
     : ${root_user:?}
@@ -117,20 +116,23 @@ spawn_root_chroot() {
         path="/usr/local/bin:/usr/bin:/bin"
     fi
 
-    if [ "$root_arch" = 'x86' ]; then
-        setarch='linux32'
-    else
-        setarch='linux64'
-    fi
+    case $root_arch in
+        x86|i?86)
+            setarch="linux32" ;;
+        x86-64|x86_64|amd64)
+            setarch="linux64" ;;
+    esac
 
-    su_run "$setarch" env - \
+    su_run $setarch env - \
         HOME="$root_home" \
-        USER="$root_user" LOGNAME="$root_user" \
+        USER="$root_user" \
+        LOGNAME="$root_user" \
         PATH="$path" \
         TERM="$TERM" \
         ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
-        chroot --userspec="$userspec" "$root_dir" \
-        ${root_command:-/bin/bash --login}
+        chroot --userspec="$userspec" \
+            "$root_dir" \
+            ${root_command:-/bin/bash --login}
 }
 
 spawn_root_systemd() {
@@ -165,7 +167,7 @@ spawn_root_systemd() {
     case $root_arch in
         x86|i?86)
             personality="x86" ;;
-        x86-64|amd64)
+        x86-64|x86_64|amd64)
             personality="x86-64" ;;
     esac
 
