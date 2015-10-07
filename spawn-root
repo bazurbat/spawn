@@ -103,6 +103,7 @@ unmount_filesystems() {
 
 spawn_root_chroot() {
     local setarch userspec
+    local path
 
     : ${root_dir:?}
     : ${root_user:?}
@@ -110,8 +111,10 @@ spawn_root_chroot() {
 
     if [ "$root_user" = 'root' ]; then
         userspec="0:0"
+        path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     else
         userspec="$USER:users"
+        path="/usr/local/bin:/usr/bin:/bin"
     fi
 
     if [ "$root_arch" = 'x86' ]; then
@@ -120,7 +123,11 @@ spawn_root_chroot() {
         setarch='linux64'
     fi
 
-    su_run "$setarch" env - HOME="$root_home" TERM="$TERM" \
+    su_run "$setarch" env - \
+        HOME="$root_home" \
+        USER="$root_user" LOGNAME="$root_user" \
+        PATH="$path" \
+        TERM="$TERM" \
         ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
         chroot --userspec="$userspec" "$root_dir" \
         ${root_command:-/bin/bash --login}
