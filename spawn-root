@@ -2,7 +2,7 @@
 
 program_name="spawn-root"
 
-root_user="user"
+root_user="dev"
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
