@@ -128,6 +128,7 @@ spawn_root_chroot() {
 
 spawn_root_systemd() {
     local IFS=$(printf '\n\t')
+    local personality=
     local args=
 
     : ${root_dir:?}
@@ -154,10 +155,17 @@ spawn_root_systemd() {
         args="${args}${S}--bind=/run/user/$UID/pulse:$pulseaudio_dir"
     fi
 
+    case $root_arch in
+        x86|i?86)
+            personality="x86" ;;
+        x86-64|amd64)
+            personality="x86-64" ;;
+    esac
+
     su_run systemd-nspawn \
         --directory="$root_dir" \
-        --personality=x86 \
         --user="$root_user" \
+        ${personality:+--personality="$personality"} \
         $args $root_command
 }
 
