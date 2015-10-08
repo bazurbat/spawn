@@ -27,16 +27,16 @@ Usage: spawn-root -d <path> [OPTIONS] -- [COMMAND]
 
 OPTIONS:
 
-  -h|--help         Print this help message
-  -d|--directory    A directory to use as a root filesystem
-  -r|--as-root      Use superuser inside the spawned root
-  --arch            Set architecture reported by uname(2)
-  --bind-home       Bind mount current user home directory inside the chroot
-  --with-ssh-agent  Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-x11        Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
-  --with-pulseaudio Set PULSE_SERVER and pass Pulseaudio socket
-  --umount          Just unmount directories for the specified root name
-  --nspawn          Use systemd-nspawn instead of chroot call
+  -h|--help             Print this help message
+  -d|--directory <dir>  A directory to use as a root filesystem
+  -r|--as-root          Use superuser inside the spawned root
+  --arch <arch>         Set architecture reported by uname(2)
+  --bind-home <dir>     Bind the specified directory as user home directory
+  --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
+  --with-x11            Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
+  --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
+  --umount              Just unmount directories for the specified root name
+  --nspawn              Use systemd-nspawn instead of chroot call
 
 SYNOPSIS:
 
@@ -70,7 +70,7 @@ mount_filesystems() {
     su_run mount --make-rslave "$root_dir/dev" || die
 
     if [ "$bind_home" ]; then
-        su_run mount --bind "$HOME" "$root_dir/$root_home"
+        su_run mount --bind "$bind_home" "$root_dir/$root_home"
     fi
 
     if [ "$with_ssh_agent" ]; then
@@ -143,6 +143,10 @@ spawn_root_systemd() {
     : ${root_dir:?}
     : ${root_user:?}
 
+    if [ "$bind_home" ]; then
+        args="${args}${S}--bind=${bind_home}:${root_home}"
+    fi
+
     if [ "$with_ssh_agent" ]; then
         args="${args}${S}--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
         args="${args}${S}--bind=$SSH_AUTH_SOCK"
@@ -206,7 +210,7 @@ while [ $# -gt 0 ]; do
             --arch)
                 root_arch="$2"; shift ;;
             --bind-home)
-                bind_home=1 ;;
+                bind_home="$2"; shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
             --with-x11)
@@ -254,6 +258,11 @@ fi
 if [ "$umount_only" ]; then
     unmount_filesystems
     exit
+fi
+
+if [ "$bind_home" ]; then
+    [ -d "$bind_home" ] ||
+        die "The directory '$bind_home' is not exists"
 fi
 
 if [ "$with_ssh_agent" ]; then
