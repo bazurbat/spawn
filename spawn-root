@@ -61,13 +61,15 @@ mount_filesystems() {
     su_run mkdir -p "$root_dir/proc"           || die
     su_run mount -t proc proc "$root_dir/proc" || die
 
-    su_run mkdir -p "$root_dir/sys"            || die
-    su_run mount --rbind /sys "$root_dir/sys"  || die
-    su_run mount --make-rslave "$root_dir/sys" || die
+    if [ "$share_system" ]; then
+        su_run mkdir -p "$root_dir/sys"            || die
+        su_run mount --rbind /sys "$root_dir/sys"  || die
+        su_run mount --make-rslave "$root_dir/sys" || die
 
-    su_run mkdir -p "$root_dir/dev"            || die
-    su_run mount --rbind /dev "$root_dir/dev"  || die
-    su_run mount --make-rslave "$root_dir/dev" || die
+        su_run mkdir -p "$root_dir/dev"            || die
+        su_run mount --rbind /dev "$root_dir/dev"  || die
+        su_run mount --make-rslave "$root_dir/dev" || die
+    fi
 
     if [ "$bind_home" ]; then
         su_run mount --bind "$bind_home" "$root_dir/$root_home"
@@ -178,6 +180,7 @@ spawn_root_systemd() {
     su_run systemd-nspawn \
         --directory="$root_dir" \
         --user="$root_user" \
+        ${share_system:+--share-system} \
         ${personality:+--personality="$personality"} \
         $args $root_command
 }
@@ -221,6 +224,8 @@ while [ $# -gt 0 ]; do
                 with_pulseaudio=1 ;;
             --umount)
                 umount_only=1 ;;
+            --share-system)
+                share_system=1 ;;
             --nspawn)
                 nspawn=1 ;;
             *)
