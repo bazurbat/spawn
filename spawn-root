@@ -58,6 +58,9 @@ mount_filesystems() {
 
     : ${root_dir:?}
 
+    su_run mkdir -p "$root_dir/proc"           || die
+    su_run mount -t proc proc "$root_dir/proc" || die
+
     su_run mkdir -p "$root_dir/sys"            || die
     su_run mount --rbind /sys "$root_dir/sys"  || die
     su_run mount --make-rslave "$root_dir/sys" || die
@@ -99,8 +102,7 @@ unmount_filesystems() {
 }
 
 spawn_root_chroot() {
-    local IFS=$(printf '\n\t')
-    local userspec= path= sudo= setarch= command=
+    local userspec= path= setarch=
 
     : ${root_dir:?}
     : ${root_user:?}
@@ -112,7 +114,6 @@ spawn_root_chroot() {
     else
         userspec="$USER:users"
         path="/usr/local/bin:/usr/bin:/bin"
-        sudo="sudo"
     fi
 
     case $root_arch in
@@ -122,10 +123,6 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
-    command="/bin/sh${S}-c${S}"
-    command="${command}$sudo /bin/mount -t proc proc /proc && \
-${root_command:-/bin/bash --login}"
-
     su_run $setarch env - \
         HOME="$root_home" \
         USER="$root_user" \
@@ -133,8 +130,9 @@ ${root_command:-/bin/bash --login}"
         PATH="$path" \
         TERM="$TERM" \
         ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
-        unshare -fimp chroot --userspec="$userspec" "$root_dir" \
-        $command
+        chroot --userspec="$userspec" \
+            "$root_dir" \
+            ${root_command:-/bin/bash --login}
 }
 
 spawn_root_systemd() {
