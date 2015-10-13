@@ -2,16 +2,16 @@
 
 program_name="spawn-root"
 
+S=$(printf '\t')
+
 container_name=
 container_user="dev"
 container_home="/home/$container_user"
-container_command="/bin/bash -l"
+container_command="/bin/bash${S}-l"
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
 pulseaudio_dir="/run/pulse"
-
-S=$(printf '\t')
 
 show_help() {
     cat <<EOF
