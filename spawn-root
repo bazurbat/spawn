@@ -296,12 +296,12 @@ fi
 root_command=
 
 while [ $# -gt 0 ]; do
-    if [ "$arg_flag" ]; then
+    if [ "$parsing_command" ]; then
         root_command="${root_command}${S}$1"
     else
         case $1 in
             --)
-                arg_flag=1 ;;
+                parsing_command=1 ;;
             -h|--help) show_help; exit ;;
             -d|--directory)
                 root_dir="$2"; shift ;;
@@ -329,8 +329,12 @@ while [ $# -gt 0 ]; do
                 using_nspawn=1 ;;
             --using-docker)
                 using_docker=1 ;;
-            *)
+            -*)
                 die "unknown argument: $1" ;;
+            *)
+                root_command="$1"
+                parsing_command=1
+                ;;
         esac
     fi
     shift
