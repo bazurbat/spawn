@@ -3,6 +3,7 @@
 program_name="spawn-root"
 
 root_user="dev"
+root_command=
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
@@ -10,18 +11,9 @@ pulseaudio_dir="/run/pulse"
 
 S=$(printf '\t')
 
-try_source() { [ -f "$1" ] && . "$1" || :; }
-
-die() {
-    local status=$?
-    [ $status = 0 ] && status=2
-    [ $# = 0 ] || echo Error: $*
-    exit $status
-}
-
 show_help() {
     cat <<EOF
-Usage: spawn-root [OPTIONS...] -- [COMMAND]
+Usage: $program_name [OPTIONS...] [--] [COMMAND [ARGS...]]
 
   Spawns new container or chroot and configures shared environment.
 
@@ -38,7 +30,7 @@ OPTIONS:
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
   --using-nspawn        Use systemd-nspawn instead of chroot call
-  --using-docker        Use Docker to run the container
+  --using-docker        Use Docker to run the named container
 
 SYNOPSIS:
 
@@ -47,12 +39,53 @@ SYNOPSIS:
 EOF
 }
 
-su_run() {
-    if [ "$UID" = "0" ]; then
-        "$@"
-    else
-        sudo "$@"
-    fi
+parse_command_line() {
+    local parsing_command=
+
+    while [ $# -gt 0 ]; do
+        if [ "$parsing_command" ]; then
+            root_command="${root_command}${S}$1"
+        else
+            case $1 in
+                --)
+                    parsing_command=1 ;;
+                -h|--help) show_help; exit ;;
+                -d|--directory)
+                    root_dir="$2"; shift ;;
+                -n|--name)
+                    container_name="$2"; shift ;;
+                -r|--as-root)
+                    root_user='root' ;;
+                --arch)
+                    root_arch="$2"; shift ;;
+                --bind-home)
+                    bind_home="$2"; shift ;;
+                --with-ssh-agent)
+                    with_ssh_agent=1 ;;
+                --with-x11)
+                    with_x11=1 ;;
+                --with-system-bus)
+                    with_system_bus=1 ;;
+                --with-pulseaudio)
+                    with_pulseaudio=1 ;;
+                --umount)
+                    umount_only=1 ;;
+                --share-system)
+                    share_system=1 ;;
+                --using-nspawn)
+                    using_nspawn=1 ;;
+                --using-docker)
+                    using_docker=1 ;;
+                -*)
+                    die "unknown argument: $1" ;;
+                *)
+                    root_command="$1"
+                    parsing_command=1
+                    ;;
+            esac
+        fi
+        shift
+    done
 }
 
 check_arguments() {
@@ -64,17 +97,17 @@ check_arguments() {
             die "root directory was not specified"
         [ -d "$root_dir" ] ||
             die "root directory '$root_dir' is not exists"
-    fi
 
-    if [ -z "$using_nspawn" ]; then
-        [ "$(command -v dirname)" ] ||
-            die "dirname command was not found"
-        [ "$(command -v realpath)" ] ||
-            die "realpath command was not found"
-        [ "$(command -v awk)" ] ||
-            die "awk command was not found"
-        [ "$(command -v tac)" ] ||
-            die "tac command was not found"
+        if [ -z "$using_nspawn" ]; then
+            [ "$(command -v dirname)" ] ||
+                die "dirname command was not found"
+            [ "$(command -v realpath)" ] ||
+                die "realpath command was not found"
+            [ "$(command -v awk)" ] ||
+                die "awk command was not found"
+            [ "$(command -v tac)" ] ||
+                die "tac command was not found"
+        fi
     fi
 
     if [ "$bind_home" ]; then
@@ -87,6 +120,39 @@ check_arguments() {
             die "SSH_AUTH_SOCK is not set"
         [ -e "$SSH_AUTH_SOCK" ] ||
             die "$SSH_AUTH_SOCK is not exists"
+    fi
+}
+
+die() {
+    local status=$?
+    [ $status = 0 ] && status=2
+    [ $# = 0 ] || echo Error: $*
+    exit $status
+}
+
+su_run() {
+    if [ "$UID" = "0" ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+try_source() { [ -f "$1" ] && . "$1" || :; }
+
+load_config() {
+    if [ "$XDG_CONFIG_HOME" ]; then
+        try_source "$XDG_CONFIG_HOME/$program_name/env"
+    else
+        try_source "$HOME/.config/$program_name/env"
+    fi
+}
+
+set_root_home() {
+    if [ "$root_user" = 'root' ]; then
+        root_home="/root"
+    else
+        root_home="/home/$root_user"
     fi
 }
 
@@ -282,71 +348,18 @@ spawn_root_systemd() {
         $args $root_command
 }
 
-if [ "$XDG_CONFIG_HOME" ]; then
-    try_source "$XDG_CONFIG_HOME/$program_name/env"
-else
-    try_source "$HOME/.config/$program_name/env"
-fi
-
 if [ $# = 0 ]; then
     show_help
     exit
 fi
 
-root_command=
+load_config
 
-while [ $# -gt 0 ]; do
-    if [ "$parsing_command" ]; then
-        root_command="${root_command}${S}$1"
-    else
-        case $1 in
-            --)
-                parsing_command=1 ;;
-            -h|--help) show_help; exit ;;
-            -d|--directory)
-                root_dir="$2"; shift ;;
-            -n|--name)
-                container_name="$2"; shift ;;
-            -r|--as-root)
-                root_user='root' ;;
-            --arch)
-                root_arch="$2"; shift ;;
-            --bind-home)
-                bind_home="$2"; shift ;;
-            --with-ssh-agent)
-                with_ssh_agent=1 ;;
-            --with-x11)
-                with_x11=1 ;;
-            --with-system-bus)
-                with_system_bus=1 ;;
-            --with-pulseaudio)
-                with_pulseaudio=1 ;;
-            --umount)
-                umount_only=1 ;;
-            --share-system)
-                share_system=1 ;;
-            --using-nspawn)
-                using_nspawn=1 ;;
-            --using-docker)
-                using_docker=1 ;;
-            -*)
-                die "unknown argument: $1" ;;
-            *)
-                root_command="$1"
-                parsing_command=1
-                ;;
-        esac
-    fi
-    shift
-done
+parse_command_line "$@"
 
 check_arguments
 
-if [ "$root_user" = 'root' ]; then
-    root_home="/root"
-else
-    root_home="/home/$root_user"
-fi
+set_root_home
 
 if [ "$umount_only" ]; then
     unmount_filesystems
