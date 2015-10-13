@@ -2,8 +2,10 @@
 
 program_name="spawn-root"
 
-root_user="dev"
-root_command=
+container_name=
+container_user="dev"
+container_home="/home/$container_user"
+container_command="/bin/bash -l"
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
@@ -44,7 +46,7 @@ parse_command_line() {
 
     while [ $# -gt 0 ]; do
         if [ "$parsing_command" ]; then
-            root_command="${root_command}${S}$1"
+            container_command="${container_command}${S}$1"
         else
             case $1 in
                 --)
@@ -55,7 +57,7 @@ parse_command_line() {
                 -n|--name)
                     container_name="$2"; shift ;;
                 -r|--as-root)
-                    root_user='root' ;;
+                    container_user='root' ;;
                 --arch)
                     root_arch="$2"; shift ;;
                 --bind-home)
@@ -79,7 +81,7 @@ parse_command_line() {
                 -*)
                     die "unknown argument: $1" ;;
                 *)
-                    root_command="$1"
+                    container_command="$1"
                     parsing_command=1
                     ;;
             esac
@@ -148,11 +150,11 @@ load_config() {
     fi
 }
 
-set_root_home() {
-    if [ "$root_user" = 'root' ]; then
-        root_home="/root"
+set_container_home() {
+    if [ "$container_user" = 'root' ]; then
+        container_home="/root"
     else
-        root_home="/home/$root_user"
+        container_home="/home/$container_user"
     fi
 }
 
@@ -166,14 +168,14 @@ extract_xauth() {
 
 copy_pulseaudio_cookie() {
     : ${root_dir:?}
-    : ${root_home:?}
+    : ${container_home:?}
 
     [ -d "/run/user/$UID/pulse" ] ||
         die "Pulseaudio runtime directory is not exists"
 
-    mkdir -p "$root_dir/$root_home/.config/pulse"
+    mkdir -p "$root_dir/$container_home/.config/pulse"
     cp -f "$HOME/.config/pulse/cookie" \
-        "$root_dir/$root_home/.config/pulse/cookie"
+        "$root_dir/$container_home/.config/pulse/cookie"
 }
 
 copy_resolv_conf() {
@@ -211,7 +213,7 @@ mount_filesystems() {
     fi
 
     if [ "$bind_home" ]; then
-        su_run mount --bind "$bind_home" "$root_dir/$root_home"
+        su_run mount --bind "$bind_home" "$root_dir/$container_home"
     fi
 
     if [ "$with_ssh_agent" ]; then
@@ -246,10 +248,10 @@ spawn_root_chroot() {
     local userspec= path= setarch=
 
     : ${root_dir:?}
-    : ${root_user:?}
-    : ${root_home:?}
+    : ${container_user:?}
+    : ${container_home:?}
 
-    if [ "$root_user" = 'root' ]; then
+    if [ "$container_user" = 'root' ]; then
         userspec="0:0"
         path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     else
@@ -265,15 +267,15 @@ spawn_root_chroot() {
     esac
 
     su_run $setarch env - \
-        HOME="$root_home" \
-        USER="$root_user" \
-        LOGNAME="$root_user" \
+        HOME="$container_home" \
+        USER="$container_user" \
+        LOGNAME="$container_user" \
         PATH="$path" \
         TERM="$TERM" \
         ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
         chroot --userspec="$userspec" \
             "$root_dir" \
-            ${root_command:-/bin/bash --login}
+            ${container_command:-/bin/bash --login}
 }
 
 spawn_root_docker() {
@@ -281,12 +283,12 @@ spawn_root_docker() {
     local args=
 
     : ${container_name:?}
-    : ${root_user:?}
+    : ${container_user:?}
 
-    args="--user=$root_user"
+    args="--user=$container_user"
 
     if [ "$bind_home" ]; then
-        args="${args}${S}--volume=$bind_home:$root_home"
+        args="${args}${S}--volume=$bind_home:$container_home"
     fi
 
     if [ "$with_ssh_agent" ]; then
@@ -294,10 +296,10 @@ spawn_root_docker() {
         args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
     fi
 
-    echo docker run --rm -it \
+    docker run --rm -it \
         ${share_system:+--privileged} \
         $args $container_name \
-        $root_command
+        $container_command
 }
 
 spawn_root_systemd() {
@@ -306,10 +308,10 @@ spawn_root_systemd() {
     local args=
 
     : ${root_dir:?}
-    : ${root_user:?}
+    : ${container_user:?}
 
     if [ "$bind_home" ]; then
-        args="${args}${S}--bind=${bind_home}:${root_home}"
+        args="${args}${S}--bind=${bind_home}:${container_home}"
     fi
 
     if [ "$with_ssh_agent" ]; then
@@ -342,10 +344,10 @@ spawn_root_systemd() {
 
     su_run systemd-nspawn \
         --directory="$root_dir" \
-        --user="$root_user" \
+        --user="$container_user" \
         ${share_system:+--share-system} \
         ${personality:+--personality="$personality"} \
-        $args $root_command
+        $args $container_command
 }
 
 if [ $# = 0 ]; then
@@ -359,12 +361,12 @@ parse_command_line "$@"
 
 check_arguments
 
-set_root_home
-
 if [ "$umount_only" ]; then
     unmount_filesystems
     exit
 fi
+
+set_container_home
 
 if [ "$using_docker" ]; then
     spawn_root_docker
