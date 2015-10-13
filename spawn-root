@@ -7,7 +7,7 @@ S=$(printf '\t')
 container_name=
 container_user="dev"
 container_home="/home/$container_user"
-container_command="/bin/bash${S}-l"
+container_command=
 
 xauth_file="/tmp/xauth"
 x11_unix_dir="/tmp/.X11-unix"
