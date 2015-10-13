@@ -21,7 +21,7 @@ die() {
 
 show_help() {
     cat <<EOF
-Usage: spawn-root -d <path> [OPTIONS] -- [COMMAND]
+Usage: spawn-root [OPTIONS...] -- [COMMAND]
 
   Spawns new container or chroot and configures shared environment.
 
@@ -29,6 +29,7 @@ OPTIONS:
 
   -h|--help             Print this help message
   -d|--directory <dir>  A directory to use as a root filesystem
+  -n|--name <name>      A name of the container to run
   -r|--as-root          Use superuser inside the spawned root
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
@@ -36,7 +37,8 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
-  --nspawn              Use systemd-nspawn instead of chroot call
+  --using-nspawn        Use systemd-nspawn instead of chroot call
+  --using-docker        Use Docker to run the container
 
 SYNOPSIS:
 
@@ -50,6 +52,77 @@ su_run() {
         "$@"
     else
         sudo "$@"
+    fi
+}
+
+check_arguments() {
+    if [ "$using_docker" ]; then
+        [ "$container_name" ] ||
+            die "container name was not specified"
+    else
+        [ "$root_dir" ] ||
+            die "root directory was not specified"
+        [ -d "$root_dir" ] ||
+            die "root directory '$root_dir' is not exists"
+    fi
+
+    if [ -z "$using_nspawn" ]; then
+        [ "$(command -v dirname)" ] ||
+            die "dirname command was not found"
+        [ "$(command -v realpath)" ] ||
+            die "realpath command was not found"
+        [ "$(command -v awk)" ] ||
+            die "awk command was not found"
+        [ "$(command -v tac)" ] ||
+            die "tac command was not found"
+    fi
+
+    if [ "$bind_home" ]; then
+        [ -d "$bind_home" ] ||
+            die "The directory '$bind_home' is not exists"
+    fi
+
+    if [ "$with_ssh_agent" ]; then
+        [ "$SSH_AUTH_SOCK" ] ||
+            die "SSH_AUTH_SOCK is not set"
+        [ -e "$SSH_AUTH_SOCK" ] ||
+            die "$SSH_AUTH_SOCK is not exists"
+    fi
+}
+
+extract_xauth() {
+    [ "$DISPLAY" ] ||
+        die "DISPLAY is not set"
+
+    xauth extract "$root_dir/$xauth_file" "$DISPLAY" ||
+        die "failed to extract X authorization entries"
+}
+
+copy_pulseaudio_cookie() {
+    : ${root_dir:?}
+    : ${root_home:?}
+
+    [ -d "/run/user/$UID/pulse" ] ||
+        die "Pulseaudio runtime directory is not exists"
+
+    mkdir -p "$root_dir/$root_home/.config/pulse"
+    cp -f "$HOME/.config/pulse/cookie" \
+        "$root_dir/$root_home/.config/pulse/cookie"
+}
+
+copy_resolv_conf() {
+    : ${root_dir:?}
+
+    su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
+        die "failed to copy resolv.conf"
+}
+
+fix_mtab() {
+    : ${root_dir:?}
+
+    if [ ! -h "$root_dir/etc/mtab" ]; then
+        su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
+            die "failed to link mtab"
     fi
 }
 
@@ -137,6 +210,30 @@ spawn_root_chroot() {
             ${root_command:-/bin/bash --login}
 }
 
+spawn_root_docker() {
+    local IFS=$(printf '\n\t')
+    local args=
+
+    : ${container_name:?}
+    : ${root_user:?}
+
+    args="--user=$root_user"
+
+    if [ "$bind_home" ]; then
+        args="${args}${S}--volume=$bind_home:$root_home"
+    fi
+
+    if [ "$with_ssh_agent" ]; then
+        args="${args}${S}--env=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+        args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
+    fi
+
+    echo docker run --rm -it \
+        ${share_system:+--privileged} \
+        $args $container_name \
+        $root_command
+}
+
 spawn_root_systemd() {
     local IFS=$(printf '\n\t')
     local personality=
@@ -208,6 +305,8 @@ while [ $# -gt 0 ]; do
             -h|--help) show_help; exit ;;
             -d|--directory)
                 root_dir="$2"; shift ;;
+            -n|--name)
+                container_name="$2"; shift ;;
             -r|--as-root)
                 root_user='root' ;;
             --arch)
@@ -226,8 +325,10 @@ while [ $# -gt 0 ]; do
                 umount_only=1 ;;
             --share-system)
                 share_system=1 ;;
-            --nspawn)
-                nspawn=1 ;;
+            --using-nspawn)
+                using_nspawn=1 ;;
+            --using-docker)
+                using_docker=1 ;;
             *)
                 die "unknown argument: $1" ;;
         esac
@@ -235,24 +336,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-if [ -z "$root_dir" ]; then
-    die "root directory was not specified"
-fi
-
-if [ ! -d "$root_dir" ]; then
-    die "root directory '$root_dir' is not exists"
-fi
-
-if [ -z "$nspawn" ]; then
-    [ "$(command -v dirname)" ] ||
-        die "dirname command was not found"
-    [ "$(command -v realpath)" ] ||
-        die "realpath command was not found"
-    [ "$(command -v awk)" ] ||
-        die "awk command was not found"
-    [ "$(command -v tac)" ] ||
-        die "tac command was not found"
-fi
+check_arguments
 
 if [ "$root_user" = 'root' ]; then
     root_home="/root"
@@ -265,44 +349,9 @@ if [ "$umount_only" ]; then
     exit
 fi
 
-if [ "$bind_home" ]; then
-    [ -d "$bind_home" ] ||
-        die "The directory '$bind_home' is not exists"
-fi
-
-if [ "$with_ssh_agent" ]; then
-    [ "$SSH_AUTH_SOCK" ] ||
-        die "SSH_AUTH_SOCK is not set"
-    [ -e "$SSH_AUTH_SOCK" ] ||
-        die "$SSH_AUTH_SOCK is not exists"
-fi
-
-if [ "$with_x11" ]; then
-    [ "$DISPLAY" ] ||
-        die "DISPLAY is not set"
-
-    xauth extract "$root_dir/$xauth_file" "$DISPLAY" ||
-        die "failed to extract X authorization entries"
-fi
-
-if [ "$with_pulseaudio" ]; then
-    [ -d "/run/user/$UID/pulse" ] ||
-        die "Pulseaudio runtime directory is not exists"
-
-    mkdir -p "$root_dir/$root_home/.config/pulse"
-    cp -f "$HOME/.config/pulse/cookie" \
-        "$root_dir/$root_home/.config/pulse/cookie"
-fi
-
-if [ ! -h "$root_dir/etc/mtab" ]; then
-    su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
-        die "failed to link mtab"
-fi
-
-su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
-    die "failed to copy resolv.conf"
-
-if [ "$nspawn" ]; then
+if [ "$using_docker" ]; then
+    spawn_root_docker
+elif [ "$using_nspawn" ]; then
     spawn_root_systemd
 else
     trap unmount_filesystems EXIT
