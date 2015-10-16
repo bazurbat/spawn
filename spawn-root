@@ -15,15 +15,13 @@ pulseaudio_dir="/run/pulse"
 
 show_help() {
     cat <<EOF
-Usage: $program_name [OPTIONS...] [--] [COMMAND [ARGS...]]
+Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
 
   Spawns new container or chroot and configures shared environment.
 
 OPTIONS:
 
   -h|--help             Print this help message
-  -d|--directory <dir>  A directory to use as a root filesystem
-  -n|--name <name>      A name of the container to run
   -r|--as-root          Use superuser inside the spawned root
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
@@ -52,10 +50,6 @@ parse_command_line() {
                 --)
                     parsing_command=1 ;;
                 -h|--help) show_help; exit ;;
-                -d|--directory)
-                    root_dir="$2"; shift ;;
-                -n|--name)
-                    container_name="$2"; shift ;;
                 -r|--as-root)
                     container_user='root' ;;
                 --arch)
@@ -81,7 +75,11 @@ parse_command_line() {
                 -*)
                     die "unknown argument: $1" ;;
                 *)
-                    container_command="$1"
+                    if [ "$using_docker" ]; then
+                        container_name="$1"
+                    else
+                        root_dir="$1"
+                    fi
                     parsing_command=1
                     ;;
             esac
