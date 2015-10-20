@@ -233,8 +233,8 @@ mount_filesystems() {
 
 unmount_filesystems() {
     : ${root_dir:?}
-
-    local root=$(realpath "$root_dir")
+    local root
+    root=$(realpath "$root_dir")
 
     for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
     do
@@ -277,7 +277,7 @@ spawn_root_chroot() {
 }
 
 spawn_root_docker() {
-    local IFS=$(printf '\n\t')
+    local IFS="$(printf '\n\t')"
     local args=
 
     : ${container_name:?}
@@ -301,7 +301,7 @@ spawn_root_docker() {
 }
 
 spawn_root_systemd() {
-    local IFS=$(printf '\n\t')
+    local IFS="$(printf '\n\t')"
     local personality=
     local args=
 
