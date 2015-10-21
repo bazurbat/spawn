@@ -8,9 +8,11 @@ container_name=
 container_user="dev"
 container_home="/home/$container_user"
 container_command=
+additional_args=
 
-xauth_file="/tmp/xauth"
-x11_unix_dir="/tmp/.X11-unix"
+xauth_file='/tmp/.spawn.xauth'
+xsock_dir='/tmp/.X11-unix'
+
 pulseaudio_dir="/run/pulse"
 
 show_help() {
@@ -26,7 +28,7 @@ OPTIONS:
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-x11            Pass DISPLAY, XAUTHORITY and bind $x11_unix_dir
+  --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
   --using-nspawn        Use systemd-nspawn instead of chroot call
@@ -34,7 +36,10 @@ OPTIONS:
 
 SYNOPSIS:
 
-  To run custom command inside the chroot pass it after --.
+  Unknown options before <name|directory> are passed to the selected launcher
+  as arguments (docker run, chroot, etc.). Everything else after
+  <name|directory> and optional '--' are considered the command to be invoked
+  inside the spawned container.
 
 EOF
 }
@@ -73,7 +78,7 @@ parse_command_line() {
                 --using-docker)
                     using_docker=1 ;;
                 -*)
-                    die "unknown argument: $1" ;;
+                    additional_args="${additional_args}${S}$1" ;;
                 *)
                     if [ "$using_docker" ]; then
                         container_name="$1"
@@ -157,11 +162,14 @@ set_container_home() {
 }
 
 extract_xauth() {
-    [ "$DISPLAY" ] ||
-        die "DISPLAY is not set"
-
-    xauth extract "$root_dir/$xauth_file" "$DISPLAY" ||
-        die "failed to extract X authorization entries"
+    : ${DISPLAY:?}
+    # This does not play well with restarting and reattaching docker
+    # containers, so use global constant name for now.
+    # xauth_file=$(mktemp)
+    # Use wildcard authentication family because hostname of container can
+    # differ from the host and default Xauthority files are hostname specific.
+    # See http://stackoverflow.com/a/25280523 for details.
+    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$xauth_file" nmerge -
 }
 
 copy_pulseaudio_cookie() {
@@ -221,8 +229,8 @@ mount_filesystems() {
     fi
 
     if [ "$with_x11" ]; then
-        su_run mkdir -p "$root_dir/$x11_unix_dir" || die
-        su_run mount --bind "$x11_unix_dir" "$root_dir/$x11_unix_dir" || die
+        su_run mkdir -p "$root_dir/$xsock_dir" || die
+        su_run mount --bind "$xsock_dir" "$root_dir/$xsock_dir" || die
     fi
 
     if [ "$with_pulseaudio" ]; then
@@ -294,9 +302,22 @@ spawn_root_docker() {
         args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
     fi
 
+    if [ "$with_x11" ]; then
+        extract_xauth
+        [ -f "$xauth_file" ] || die "no X authority file"
+        [ -d "$xsock_dir"  ] || die "no X socket directory"
+
+        args="${args}${S}--env=DISPLAY=$DISPLAY"
+        args="${args}${S}--env=XAUTHORITY=$xauth_file"
+        # disable Qt's usage of shared memory which we do not expose
+        args="${args}${S}--env=QT_X11_NO_MITSHM=1"
+        args="${args}${S}--volume=$xauth_file:$xauth_file"
+        args="${args}${S}--volume=$xsock_dir:$xsock_dir"
+    fi
+
     docker run --rm -it \
         ${share_system:+--privileged} \
-        $args $container_name \
+        $args $additional_args $container_name \
         $container_command
 }
 
@@ -321,7 +342,7 @@ spawn_root_systemd() {
         args="${args}${S}--setenv=DISPLAY=$DISPLAY"
         args="${args}${S}--setenv=XAUTHORITY=$xauth_file"
         args="${args}${S}--setenv=QT_X11_NO_MITSHM=1"
-        args="${args}${S}--bind=$x11_unix_dir"
+        args="${args}${S}--bind=$xsock_dir"
     fi
 
     if [ "$with_system_bus" ]; then
