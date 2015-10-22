@@ -1,6 +1,6 @@
 #!/bin/sh
 
-program_name="spawn-root"
+program_name="spawn"
 
 S=$(printf '\t')
 
