@@ -4,6 +4,7 @@ program_name="spawn-root"
 
 S=$(printf '\t')
 
+container_type="docker"
 container_name=
 container_user="dev"
 container_home="/home/$container_user"
@@ -31,15 +32,19 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
-  --using-nspawn        Use systemd-nspawn instead of chroot call
-  --using-docker        Use Docker to run the named container
+  --using-docker        Run command in a new Docker container
+  --using-nspawn        Spawn namespace container using systemd-nspawn
+  --using-chroot        Change the root directory using chroot
 
 SYNOPSIS:
 
   Unknown options before <name|directory> are passed to the selected launcher
   as arguments (docker run, chroot, etc.). Everything else after
   <name|directory> and optional '--' are considered the command to be invoked
-  inside the spawned container.
+  inside the spawned container or chroot.
+
+  Options starting with '--using' are mutually exclusive -- only the last one
+  will have an effect, and '--using-docker' is assumed if none was specified.
 
 EOF
 }
@@ -73,18 +78,19 @@ parse_command_line() {
                     umount_only=1 ;;
                 --share-system)
                     share_system=1 ;;
-                --using-nspawn)
-                    using_nspawn=1 ;;
                 --using-docker)
-                    using_docker=1 ;;
+                    container_type='docker' ;;
+                --using-nspawn)
+                    container_type='nspawn' ;;
+                --using-chroot)
+                    container_type='chroot' ;;
                 -*)
                     additional_args="${additional_args}${S}$1" ;;
                 *)
-                    if [ "$using_docker" ]; then
-                        container_name="$1"
-                    else
-                        root_dir="$1"
-                    fi
+                    case $container_type in
+                        docker) container_name="$1" ;;
+                        *) root_dir="$1" ;;
+                    esac
                     parsing_command=1
                     ;;
             esac
@@ -94,26 +100,28 @@ parse_command_line() {
 }
 
 check_arguments() {
-    if [ "$using_docker" ]; then
-        [ "$container_name" ] ||
-            die "container name was not specified"
-    else
-        [ "$root_dir" ] ||
-            die "root directory was not specified"
-        [ -d "$root_dir" ] ||
-            die "root directory '$root_dir' is not exists"
+    case $container_type in
+        docker)
+            [ "$container_name" ] ||
+                die "container name was not specified"
+            ;;
+        *)
+            [ "$root_dir" ] ||
+                die "root directory was not specified"
+            [ -d "$root_dir" ] ||
+                die "root directory '$root_dir' is not exists"
 
-        if [ -z "$using_nspawn" ]; then
-            [ "$(command -v dirname)" ] ||
-                die "dirname command was not found"
-            [ "$(command -v realpath)" ] ||
-                die "realpath command was not found"
-            [ "$(command -v awk)" ] ||
-                die "awk command was not found"
-            [ "$(command -v tac)" ] ||
-                die "tac command was not found"
-        fi
-    fi
+            if [ "$container_type" = 'chroot' ]; then
+                [ "$(command -v dirname)" ] ||
+                    die "dirname command was not found"
+                [ "$(command -v realpath)" ] ||
+                    die "realpath command was not found"
+                [ "$(command -v awk)" ] ||
+                    die "awk command was not found"
+                [ "$(command -v tac)" ] ||
+                    die "tac command was not found"
+            fi
+    esac
 
     if [ "$bind_home" ]; then
         [ -d "$bind_home" ] ||
@@ -257,6 +265,9 @@ spawn_root_chroot() {
     : ${container_user:?}
     : ${container_home:?}
 
+    trap unmount_filesystems EXIT
+    mount_filesystems
+
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
         path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -387,12 +398,9 @@ fi
 
 set_container_home
 
-if [ "$using_docker" ]; then
-    spawn_root_docker
-elif [ "$using_nspawn" ]; then
-    spawn_root_systemd
-else
-    trap unmount_filesystems EXIT
-    mount_filesystems
-    spawn_root_chroot
-fi
+case $container_type in
+    docker) spawn_root_docker  ;;
+    nspawn) spawn_root_systemd ;;
+    chroot) spawn_root_chroot  ;;
+    *) die "invalid container type: $container_type" ;;
+esac
