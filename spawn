@@ -11,7 +11,10 @@ container_home="/home/$container_user"
 container_command=
 additional_args=
 
-xauth_file='/tmp/.spawn.xauth'
+# keep this constant to be able to resume Docker containers
+temp_dir="/var/tmp/${program_name}-$(id -u)"
+
+xauth_file="$temp_dir/Xauthority"
 xsock_dir='/tmp/.X11-unix'
 
 pulseaudio_dir="/run/pulse"
@@ -397,6 +400,8 @@ if [ "$umount_only" ]; then
 fi
 
 set_container_home
+
+[ -d "$temp_dir" ] || mkdir -p "$temp_dir"
 
 case $container_type in
     docker) spawn_root_docker  ;;
