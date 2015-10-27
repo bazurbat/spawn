@@ -262,7 +262,8 @@ unmount_filesystems() {
 }
 
 spawn_root_chroot() {
-    local userspec= path= setarch=
+    local IFS="$(printf '\n\t')"
+    local userspec= path= setarch= env=
 
     : ${root_dir:?}
     : ${container_user:?}
@@ -286,13 +287,22 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
-    su_run $setarch env - \
-        HOME="$container_home" \
-        USER="$container_user" \
-        LOGNAME="$container_user" \
-        PATH="$path" \
-        TERM="$TERM" \
-        ${with_ssh_agent:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} \
+    env="${env}${S}HOME=$container_home"
+    env="${env}${S}USER=$container_user"
+    env="${env}${S}LOGNAME=$container_user"
+    env="${env}${S}PATH=$path"
+    env="${env}${S}TERM=$TERM"
+
+    if [ "$with_ssh_agent" ]; then
+        env="${env}${S}SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+    fi
+
+    if [ "$with_x11" ]; then
+        env="${env}${S}DISPLAY=$DISPLAY"
+        env="${env}${S}XAUTHORITY=$xauth_file"
+    fi
+
+    echo su_run $setarch env - $env \
         chroot --userspec="$userspec" \
             "$root_dir" \
             ${container_command:-/bin/bash --login}
@@ -317,10 +327,6 @@ spawn_root_docker() {
     fi
 
     if [ "$with_x11" ]; then
-        extract_xauth
-        [ -f "$xauth_file" ] || die "no X authority file"
-        [ -d "$xsock_dir"  ] || die "no X socket directory"
-
         args="${args}${S}--env=DISPLAY=$DISPLAY"
         args="${args}${S}--env=XAUTHORITY=$xauth_file"
         # disable Qt's usage of shared memory which we do not expose
@@ -344,7 +350,7 @@ spawn_root_systemd() {
     : ${container_user:?}
 
     if [ "$bind_home" ]; then
-        args="${args}${S}--bind=${bind_home}:${container_home}"
+        args="${args}${S}--bind=$bind_home:$container_home"
     fi
 
     if [ "$with_ssh_agent" ]; then
@@ -356,6 +362,7 @@ spawn_root_systemd() {
         args="${args}${S}--setenv=DISPLAY=$DISPLAY"
         args="${args}${S}--setenv=XAUTHORITY=$xauth_file"
         args="${args}${S}--setenv=QT_X11_NO_MITSHM=1"
+        args="${args}${S}--bind=$xauth_file"
         args="${args}${S}--bind=$xsock_dir"
     fi
 
@@ -380,7 +387,7 @@ spawn_root_systemd() {
         --user="$container_user" \
         ${share_system:+--share-system} \
         ${personality:+--personality="$personality"} \
-        $args $container_command
+        $args $additional_args $container_command
 }
 
 if [ $# = 0 ]; then
@@ -402,6 +409,12 @@ fi
 set_container_home
 
 [ -d "$temp_dir" ] || mkdir -p "$temp_dir"
+
+if [ "$with_x11" ]; then
+    extract_xauth
+    [ -f "$xauth_file" ] || die "no X authority file"
+    [ -d "$xsock_dir"  ] || die "no X socket directory"
+fi
 
 case $container_type in
     docker) spawn_root_docker  ;;
