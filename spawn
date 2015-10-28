@@ -211,45 +211,6 @@ fix_mtab() {
     fi
 }
 
-mount_filesystems() {
-    local ssh_sock_dir
-
-    : ${root_dir:?}
-
-    su_run mkdir -p "$root_dir/proc"           || die
-    su_run mount -t proc proc "$root_dir/proc" || die
-
-    if [ "$share_system" ]; then
-        su_run mkdir -p "$root_dir/sys"            || die
-        su_run mount --rbind /sys "$root_dir/sys"  || die
-        su_run mount --make-rslave "$root_dir/sys" || die
-
-        su_run mkdir -p "$root_dir/dev"            || die
-        su_run mount --rbind /dev "$root_dir/dev"  || die
-        su_run mount --make-rslave "$root_dir/dev" || die
-    fi
-
-    if [ "$bind_home" ]; then
-        su_run mount --bind "$bind_home" "$root_dir/$container_home"
-    fi
-
-    if [ "$with_ssh_agent" ]; then
-        ssh_sock_dir=$(dirname "$SSH_AUTH_SOCK")
-        su_run mkdir -p "$root_dir/$ssh_sock_dir" || die
-        su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
-    fi
-
-    if [ "$with_x11" ]; then
-        su_run mkdir -p "$root_dir/$xsock_dir" || die
-        su_run mount --bind "$xsock_dir" "$root_dir/$xsock_dir" || die
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        su_run mkdir -p "$root_dir/$pulseaudio_dir" || die
-        su_run mount --bind /run/user/$UID/pulse "$root_dir/$pulseaudio_dir" || die
-    fi
-}
-
 unmount_filesystems() {
     : ${root_dir:?}
     local root
@@ -263,14 +224,14 @@ unmount_filesystems() {
 
 spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
-    local userspec= path= setarch= env=
+    local userspec= path= setarch= env= ssh_sock_dir=
+    local cmd= chroot_cmd=
 
     : ${root_dir:?}
     : ${container_user:?}
     : ${container_home:?}
 
     trap unmount_filesystems EXIT
-    mount_filesystems
 
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
@@ -287,25 +248,49 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
+    if [ "$share_system" ]; then
+        su_run mkdir -p "$root_dir/sys"            || die
+        su_run mount --rbind /sys "$root_dir/sys"  || die
+        su_run mount --make-rslave "$root_dir/sys" || die
+        su_run mkdir -p "$root_dir/dev"            || die
+        su_run mount --rbind /dev "$root_dir/dev"  || die
+        su_run mount --make-rslave "$root_dir/dev" || die
+    fi
+
+    if [ "$bind_home" ]; then
+        su_run mount --bind "$bind_home" "$root_dir/$container_home"
+    fi
+
+    env="${env}${S}TERM=$TERM"
     env="${env}${S}HOME=$container_home"
     env="${env}${S}USER=$container_user"
     env="${env}${S}LOGNAME=$container_user"
     env="${env}${S}PATH=$path"
-    env="${env}${S}TERM=$TERM"
 
     if [ "$with_ssh_agent" ]; then
         env="${env}${S}SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+        ssh_sock_dir=$(dirname "$SSH_AUTH_SOCK")
+        su_run mkdir -p "$root_dir/$ssh_sock_dir" || die
+        su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
     fi
 
     if [ "$with_x11" ]; then
         env="${env}${S}DISPLAY=$DISPLAY"
         env="${env}${S}XAUTHORITY=$xauth_file"
+        su_run mkdir -p "$root_dir/$xsock_dir" || die
+        su_run mkdir -p "$root_dir/$(dirname $xauth_file)" || die
+        su_run mount --bind "$xsock_dir" "$root_dir/$xsock_dir" || die
+        su_run cp -a --parents "$xauth_file" "$root_dir" || die
     fi
 
-    echo su_run $setarch env - $env \
-        chroot --userspec="$userspec" \
-            "$root_dir" \
-            ${container_command:-/bin/bash --login}
+    cmd="${container_command:-/bin/bash -l}"
+
+    chroot_cmd="mount -t proc proc $root_dir/proc &&"
+    chroot_cmd="${chroot_cmd} chroot --userspec=$userspec"
+    chroot_cmd="${chroot_cmd} ${root_dir}"
+    chroot_cmd="${chroot_cmd} ${cmd}"
+
+    su_run $setarch env - $env unshare -pf sh -c "$chroot_cmd"
 }
 
 spawn_root_docker() {
