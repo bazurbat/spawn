@@ -36,7 +36,7 @@ OPTIONS:
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
   --using-docker        Run command in a new Docker container
-  --using-nspawn        Spawn namespace container using systemd-nspawn
+  --using-systemd       Spawn namespace container using systemd-nspawn
   --using-chroot        Change the root directory using chroot
 
 SYNOPSIS:
@@ -83,8 +83,8 @@ parse_command_line() {
                     share_system=1 ;;
                 --using-docker)
                     container_type='docker' ;;
-                --using-nspawn)
-                    container_type='nspawn' ;;
+                --using-systemd)
+                    container_type='systemd' ;;
                 --using-chroot)
                     container_type='chroot' ;;
                 -*)
@@ -402,8 +402,8 @@ if [ "$with_x11" ]; then
 fi
 
 case $container_type in
-    docker) spawn_root_docker  ;;
-    nspawn) spawn_root_systemd ;;
-    chroot) spawn_root_chroot  ;;
+    docker)  spawn_root_docker  ;;
+    systemd) spawn_root_systemd ;;
+    chroot)  spawn_root_chroot  ;;
     *) die "invalid container type: $container_type" ;;
 esac
