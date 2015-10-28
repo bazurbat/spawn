@@ -73,8 +73,6 @@ parse_command_line() {
                     with_ssh_agent=1 ;;
                 --with-x11)
                     with_x11=1 ;;
-                --with-system-bus)
-                    with_system_bus=1 ;;
                 --with-pulseaudio)
                     with_pulseaudio=1 ;;
                 --umount)
@@ -349,10 +347,6 @@ spawn_root_systemd() {
         args="${args}${S}--setenv=QT_X11_NO_MITSHM=1"
         args="${args}${S}--bind=$xauth_file"
         args="${args}${S}--bind=$xsock_dir"
-    fi
-
-    if [ "$with_system_bus" ]; then
-        args="${args}${S}--bind=/run/dbus"
     fi
 
     if [ "$with_pulseaudio" ]; then
