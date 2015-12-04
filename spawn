@@ -17,6 +17,7 @@ temp_dir="/var/tmp/${program_name}-$(id -u)"
 xauth_file="$temp_dir/Xauthority"
 xsock_dir='/tmp/.X11-unix'
 
+pulseaudio_server_dir=$(dirname $(pactl info | awk 'BEGIN { FS=":" }; /Server String/ { print $3 }'))
 pulseaudio_dir="/run/pulse"
 
 show_help() {
@@ -279,6 +280,14 @@ spawn_root_chroot() {
         su_run mkdir -p "$root_dir/$(dirname $xauth_file)" || die
         su_run mount --bind "$xsock_dir" "$root_dir/$xsock_dir" || die
         su_run cp -a --parents "$xauth_file" "$root_dir" || die
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        [ "$pulseaudio_server_dir" ] || die
+        [ -d "$pulseaudio_server_dir" ] || die
+        env="${env}${S}PULSE_SERVER=$pulseaudio_dir/native"
+        su_run mkdir -p "$root_dir/$pulseaudio_dir" || die
+        su_run mount --bind "$pulseaudio_server_dir" "$root_dir/$pulseaudio_dir" || die
     fi
 
     cmd="${container_command:-/bin/bash -l}"
