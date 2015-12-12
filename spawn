@@ -64,11 +64,7 @@ parse_command_line() {
             if [ "$1" = '--' -a "$eoa" = "$#" ]; then
                 eoa=
             else
-                if [ "$container_command" ]; then
-                    container_command="${container_command}${S}$1"
-                else
-                    container_command="$1"
-                fi
+                container_command="${container_command}${S}${1}"
             fi
         else
             case $1 in
@@ -243,7 +239,7 @@ unmount_filesystems() {
 spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
     local userspec= path= setarch= env= ssh_sock_dir=
-    local cmd= chroot_cmd=
+    local cmd= i=
 
     : ${root_dir:?}
     : ${container_user:?}
@@ -309,14 +305,18 @@ spawn_root_chroot() {
         su_run mount --bind "$pulseaudio_server_dir" "$root_dir/$pulseaudio_dir" || die
     fi
 
-    cmd="${container_command:-/bin/bash -l}"
+    if [ "$container_command" ]; then
+        for i in $container_command; do
+            cmd="$cmd '$i'"
+        done
+    else
+        cmd="/bin/bash -l"
+    fi
 
-    chroot_cmd="mount -t proc proc $root_dir/proc &&"
-    chroot_cmd="${chroot_cmd} chroot --userspec=$userspec"
-    chroot_cmd="${chroot_cmd} ${root_dir}"
-    chroot_cmd="${chroot_cmd} ${cmd}"
-
-    su_run $setarch env - $env unshare -pf sh -c "$chroot_cmd"
+    su_run $setarch env - $env unshare -pf sh <<-EOF
+        mount -t proc proc $root_dir/proc &&
+        chroot --userspec=$userspec $root_dir $cmd
+EOF
 }
 
 spawn_root_docker() {
