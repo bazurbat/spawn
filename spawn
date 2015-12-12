@@ -239,7 +239,7 @@ unmount_filesystems() {
 spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
     local userspec= path= setarch= env= ssh_sock_dir=
-    local cmd= i=
+    local cmd= chroot_cmd= i=
 
     : ${root_dir:?}
     : ${container_user:?}
@@ -313,10 +313,12 @@ spawn_root_chroot() {
         cmd="/bin/bash -l"
     fi
 
-    su_run $setarch env - $env unshare -pf sh <<-EOF
-        mount -t proc proc $root_dir/proc &&
-        chroot --userspec=$userspec $root_dir $cmd
-EOF
+    chroot_cmd="mount -t proc proc $root_dir/proc &&"
+    chroot_cmd="${chroot_cmd} chroot --userspec=$userspec"
+    chroot_cmd="${chroot_cmd} ${root_dir}"
+    chroot_cmd="${chroot_cmd} ${cmd}"
+
+    su_run $setarch env - $env unshare -pf sh -c $chroot_cmd
 }
 
 spawn_root_docker() {
