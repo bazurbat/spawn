@@ -21,7 +21,7 @@ xsock_dir='/tmp/.X11-unix'
 pulseaudio_server_dir=$(dirname $(pactl info | awk 'BEGIN { FS=":" }; /Server String/ { print $3 }'))
 pulseaudio_dir="/run/pulse"
 
-show_help() {
+show_usage() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
 
@@ -48,7 +48,9 @@ SYNOPSIS:
   inside the spawned container or chroot.
 
   Options starting with '--using' are mutually exclusive -- only the last one
-  will have an effect, and '--using-docker' is assumed if none was specified.
+  will have an effect. If none was given and the first non option argument
+  specifies an existing directory then chroot will be assumed, otherwise the
+  name will be passed to 'docker run'.
 
 EOF
 }
@@ -72,7 +74,7 @@ parse_command_line() {
             case $1 in
                 --)
                     parsing_command=1 ;;
-                -h|--help) show_help; exit ;;
+                -h|--help) show_usage; exit ;;
                 -r|--as-root)
                     container_user='root' ;;
                 --arch)
@@ -123,22 +125,23 @@ check_arguments() {
             [ "$container_name" ] ||
                 die "container name was not specified"
             ;;
-        *)
+        chroot)
             [ "$root_dir" ] ||
                 die "root directory was not specified"
             [ -d "$root_dir" ] ||
                 die "root directory '$root_dir' is not exists"
-
-            if [ "$container_type" = 'chroot' ]; then
-                [ "$(command -v dirname)" ] ||
-                    die "dirname command was not found"
-                [ "$(command -v realpath)" ] ||
-                    die "realpath command was not found"
-                [ "$(command -v awk)" ] ||
-                    die "awk command was not found"
-                [ "$(command -v tac)" ] ||
-                    die "tac command was not found"
-            fi
+            [ "$(command -v dirname)" ] ||
+                die "dirname command was not found"
+            [ "$(command -v realpath)" ] ||
+                die "realpath command was not found"
+            [ "$(command -v awk)" ] ||
+                die "awk command was not found"
+            [ "$(command -v tac)" ] ||
+                die "tac command was not found"
+            ;;
+        *)
+            die "unsupported container type: $container_type"
+            ;;
     esac
 
     if [ "$bind_home" ]; then
@@ -350,7 +353,7 @@ spawn_root_docker() {
 }
 
 if [ $# = 0 ]; then
-    show_help
+    show_usage
     exit
 fi
 
