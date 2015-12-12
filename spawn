@@ -4,7 +4,8 @@ program_name="spawn"
 
 S=$(printf '\t')
 
-container_type="docker"
+root_dir=
+container_type=
 container_name=
 container_user="dev"
 container_home="/home/$container_user"
@@ -37,7 +38,6 @@ OPTIONS:
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
   --using-docker        Run command in a new Docker container
-  --using-systemd       Spawn namespace container using systemd-nspawn
   --using-chroot        Change the root directory using chroot
 
 SYNOPSIS:
@@ -54,11 +54,20 @@ EOF
 }
 
 parse_command_line() {
-    local parsing_command=
+    local parsing_command= eoa=
 
     while [ $# -gt 0 ]; do
         if [ "$parsing_command" ]; then
-            container_command="${container_command}${S}$1"
+            # eat first '--' after non option argument
+            if [ "$1" = '--' -a "$eoa" = "$#" ]; then
+                eoa=
+            else
+                if [ "$container_command" ]; then
+                    container_command="${container_command}${S}$1"
+                else
+                    container_command="$1"
+                fi
+            fi
         else
             case $1 in
                 --)
@@ -82,8 +91,6 @@ parse_command_line() {
                     share_system=1 ;;
                 --using-docker)
                     container_type='docker' ;;
-                --using-systemd)
-                    container_type='systemd' ;;
                 --using-chroot)
                     container_type='chroot' ;;
                 -*)
@@ -91,9 +98,18 @@ parse_command_line() {
                 *)
                     case $container_type in
                         docker) container_name="$1" ;;
-                        *) root_dir="$1" ;;
+                        chroot) root_dir="$1" ;;
+                        *)
+                            if [ -d "$1" ]; then
+                                container_type='chroot'
+                                root_dir="$1"
+                            else
+                                container_type='docker'
+                                container_name="$1"
+                            fi ;;
                     esac
                     parsing_command=1
+                    eoa=$(($#-1))
                     ;;
             esac
         fi
@@ -333,51 +349,6 @@ spawn_root_docker() {
         $container_command
 }
 
-spawn_root_systemd() {
-    local IFS="$(printf '\n\t')"
-    local personality=
-    local args=
-
-    : ${root_dir:?}
-    : ${container_user:?}
-
-    if [ "$bind_home" ]; then
-        args="${args}${S}--bind=$bind_home:$container_home"
-    fi
-
-    if [ "$with_ssh_agent" ]; then
-        args="${args}${S}--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-        args="${args}${S}--bind=$SSH_AUTH_SOCK"
-    fi
-
-    if [ "$with_x11" ]; then
-        args="${args}${S}--setenv=DISPLAY=$DISPLAY"
-        args="${args}${S}--setenv=XAUTHORITY=$xauth_file"
-        args="${args}${S}--setenv=QT_X11_NO_MITSHM=1"
-        args="${args}${S}--bind=$xauth_file"
-        args="${args}${S}--bind=$xsock_dir"
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        args="${args}${S}--setenv=PULSE_SERVER=$pulseaudio_dir/native"
-        args="${args}${S}--bind=/run/user/$UID/pulse:$pulseaudio_dir"
-    fi
-
-    case $root_arch in
-        x86|i?86)
-            personality="x86" ;;
-        x86-64|x86_64|amd64)
-            personality="x86-64" ;;
-    esac
-
-    su_run systemd-nspawn \
-        --directory="$root_dir" \
-        --user="$container_user" \
-        ${share_system:+--share-system} \
-        ${personality:+--personality="$personality"} \
-        $args $additional_args $container_command
-}
-
 if [ $# = 0 ]; then
     show_help
     exit
@@ -404,9 +375,10 @@ if [ "$with_x11" ]; then
     [ -d "$xsock_dir"  ] || die "no X socket directory"
 fi
 
-case $container_type in
-    docker)  spawn_root_docker  ;;
-    systemd) spawn_root_systemd ;;
-    chroot)  spawn_root_chroot  ;;
-    *) die "invalid container type: $container_type" ;;
-esac
+if [ "$container_name" ]; then
+    spawn_root_docker
+elif [ "$root_dir" ]; then
+    spawn_root_chroot
+else
+    die "container name or chroot directory is not specified"
+fi
