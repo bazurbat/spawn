@@ -134,6 +134,12 @@ check_arguments() {
                 die "awk command was not found"
             [ "$(command -v tac)" ] ||
                 die "tac command was not found"
+
+            chroot=$(command -v chroot)
+            [ "$chroot" ] ||
+                chroot="/usr/sbin/chroot"
+            [ -x "$chroot" ] ||
+                die "chroot command was not found"
             ;;
         *)
             die "unsupported container type: $container_type"
@@ -314,7 +320,7 @@ spawn_root_chroot() {
     fi
 
     chroot_cmd="mount -t proc proc $root_dir/proc &&"
-    chroot_cmd="${chroot_cmd} chroot --userspec=$userspec"
+    chroot_cmd="${chroot_cmd} $chroot --userspec=$userspec"
     chroot_cmd="${chroot_cmd} ${root_dir}"
     chroot_cmd="${chroot_cmd} ${cmd}"
 
