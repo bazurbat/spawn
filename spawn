@@ -268,6 +268,9 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
+    # TODO: Some systems (Ubuntu) make /dev/shm symlink to /run/shm which will
+    # become invalid after chroot. Figure out how to handle this gracefully.
+
     if [ "$share_system" ]; then
         su_run mkdir -p "$root_dir/sys"            || die
         su_run mount --rbind /sys "$root_dir/sys"  || die
@@ -275,6 +278,13 @@ spawn_root_chroot() {
         su_run mkdir -p "$root_dir/dev"            || die
         su_run mount --rbind /dev "$root_dir/dev"  || die
         su_run mount --make-rslave "$root_dir/dev" || die
+    else
+        if [ -h "$root_dir/dev/shm" ]; then
+            su_run rm "$root_dir/dev/shm"
+        fi
+        su_run mkdir -p "$root_dir/dev/shm"
+        su_run mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm"
+        su_run chmod 1777 "$root_dir/dev/shm"
     fi
 
     if [ "$bind_home" ]; then
