@@ -18,9 +18,6 @@ temp_dir="/var/tmp/${program_name}-$(id -u)"
 xauth_file="$temp_dir/Xauthority"
 xsock_dir='/tmp/.X11-unix'
 
-pulseaudio_server_dir=$(dirname $(pactl info | awk 'BEGIN { FS=":" }; /Server String/ { print $3 }'))
-pulseaudio_dir="/run/pulse"
-
 show_usage() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
@@ -314,6 +311,9 @@ spawn_root_chroot() {
     fi
 
     if [ "$with_pulseaudio" ]; then
+        pulseaudio_server_dir=$(dirname $(pactl info | awk 'BEGIN { FS=":" }; /Server String/ { print $3 }'))
+        pulseaudio_dir="/run/pulse"
+
         [ "$pulseaudio_server_dir" ] || die
         [ -d "$pulseaudio_server_dir" ] || die
         env="${env}${S}PULSE_SERVER=$pulseaudio_dir/native"
