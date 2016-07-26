@@ -1,0 +1,21 @@
+### Spawn completion definitions ###
+
+_spawn_complete() {
+    local cur prev
+    _get_comp_words_by_ref cur prev
+
+    local opts='--help --as-root
+--arch --bind-home
+--with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
+--umount --share-system
+--using-docker --using-chroot'
+
+    case $prev in
+        --arch|--bind-home) ;;
+        *) COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
+    esac
+}
+
+complete -F _spawn_complete spawn
+
+### End of Spawn completion definitions ###
