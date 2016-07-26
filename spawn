@@ -18,6 +18,8 @@ temp_dir="/var/tmp/${program_name}-$(id -u)"
 xauth_file="$temp_dir/Xauthority"
 xsock_dir='/tmp/.X11-unix'
 
+gpg_agent_socket=
+
 show_usage() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
@@ -31,6 +33,7 @@ OPTIONS:
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
+  --with-gpg-agent      Pass GPG_AGENT_INFO variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount              Just unmount directories for the specified root name
@@ -76,6 +79,8 @@ parse_command_line() {
                     bind_home="$2"; shift ;;
                 --with-ssh-agent)
                     with_ssh_agent=1 ;;
+                --with-gpg-agent)
+                    with_gpg_agent=1 ;;
                 --with-x11)
                     with_x11=1 ;;
                 --with-pulseaudio)
@@ -153,6 +158,13 @@ check_arguments() {
             die "SSH_AUTH_SOCK is not set"
         [ -e "$SSH_AUTH_SOCK" ] ||
             die "$SSH_AUTH_SOCK is not exists"
+    fi
+
+    if [ "$with_gpg_agent" ]; then
+        [ "$GPG_AGENT_INFO" ] ||
+            die "GPG_AGENT_INFO is not set"
+        [ -e "$gpg_agent_socket" ] ||
+            die "gpg agent socket is not exists"
     fi
 }
 
@@ -241,7 +253,7 @@ unmount_filesystems() {
 
 spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
-    local userspec= path= setarch= env= ssh_sock_dir=
+    local userspec= path= setarch= env= ssh_sock_dir= gpg_sock_dir=
     local cmd= chroot_cmd= i=
 
     : ${root_dir:?}
@@ -301,6 +313,13 @@ spawn_root_chroot() {
         su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
     fi
 
+    if [ "$with_gpg_agent" ]; then
+        env="${env}${S}GPG_AGENT_INFO=$GPG_AGENT_INFO"
+        gpg_sock_dir=$(dirname "$gpg_agent_socket")
+        su_run mkdir -p "$root_dir/$gpg_sock_dir" || die
+        su_run mount --bind "$gpg_sock_dir" "$root_dir/$gpg_sock_dir" || die
+    fi
+
     if [ "$with_x11" ]; then
         env="${env}${S}DISPLAY=$DISPLAY"
         env="${env}${S}XAUTHORITY=$xauth_file"
@@ -356,6 +375,11 @@ spawn_root_docker() {
         args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
     fi
 
+    if [ "$with_gpg_agent" ]; then
+        args="${args}${S}--env=GPG_AGENT_INFO=$GPG_AGENT_INFO"
+        args="${args}${S}--volume=$gpg_agent_socket:$gpg_agent_socket"
+    fi
+
     if [ "$with_x11" ]; then
         args="${args}${S}--env=DISPLAY=$DISPLAY"
         args="${args}${S}--env=XAUTHORITY=$xauth_file"
@@ -379,6 +403,10 @@ fi
 load_config
 
 parse_command_line "$@"
+
+if [ "$with_gpg_agent" ]; then
+    gpg_agent_socket="${GPG_AGENT_INFO%%:*}"
+fi
 
 check_arguments
 
