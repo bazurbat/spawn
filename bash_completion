@@ -11,8 +11,12 @@ _spawn_complete() {
 --using-docker --using-chroot'
 
     case $prev in
-        --arch|--bind-home) ;;
-        *) COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
+        --arch)
+            COMPREPLY=($(compgen -W "x86 x86-64" -- "$cur")) ;;
+        --bind-home)
+            COMPREPLY=($(compgen -A directory -- "$cur")) ;;
+        *)
+            COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
     esac
 }
 
