@@ -294,6 +294,9 @@ spawn_root_chroot() {
         su_run mkdir -p "$root_dir/dev/shm"
         su_run mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm"
         su_run chmod 1777 "$root_dir/dev/shm"
+
+        su_run mkdir -p "$root_dir/dev/pts"
+        su_run mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts"
     fi
 
     if [ "$bind_home" ]; then
