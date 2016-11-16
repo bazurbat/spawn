@@ -215,7 +215,6 @@ set_container_home() {
 }
 
 extract_xauth() {
-    : ${DISPLAY:?}
     # This does not play well with restarting and reattaching docker
     # containers, so use global constant name for now.
     # xauth_file=$(mktemp)
@@ -226,9 +225,6 @@ extract_xauth() {
 }
 
 copy_pulseaudio_cookie() {
-    : ${root_dir:?}
-    : ${container_home:?}
-
     [ -d "/run/user/$UID/pulse" ] ||
         die "Pulseaudio runtime directory is not exists"
 
@@ -238,15 +234,11 @@ copy_pulseaudio_cookie() {
 }
 
 copy_resolv_conf() {
-    : ${root_dir:?}
-
     su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
         die "failed to copy resolv.conf"
 }
 
 fix_mtab() {
-    : ${root_dir:?}
-
     if [ ! -h "$root_dir/etc/mtab" ]; then
         su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
             die "failed to link mtab"
@@ -254,7 +246,6 @@ fix_mtab() {
 }
 
 unmount_filesystems() {
-    : ${root_dir:?}
     local root
     root=$(realpath "$root_dir")
 
@@ -268,10 +259,6 @@ spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
     local userspec= path= setarch= env= ssh_sock_dir= gpg_sock_dir=
     local cmd= chroot_cmd= i=
-
-    : ${root_dir:?}
-    : ${container_user:?}
-    : ${container_home:?}
 
     trap unmount_filesystems EXIT
 
@@ -376,9 +363,6 @@ spawn_root_chroot() {
 spawn_root_docker() {
     local IFS="$(printf '\n\t')"
     local args=
-
-    : ${container_name:?}
-    : ${container_user:?}
 
     args="--user=$container_user"
 
