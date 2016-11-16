@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -u
+
 program_name="spawn"
 
 S=$(printf '\t')
@@ -11,6 +13,14 @@ container_user="dev"
 container_home="/home/$container_user"
 container_command=
 additional_args=
+
+root_arch=
+with_ssh_agent=
+with_gpg_agent=
+with_pulseaudio=
+with_x11=
+umount_only=
+share_system=
 
 # keep this constant to be able to resume Docker containers
 temp_dir="/var/tmp/${program_name}-$(id -u)"
@@ -186,7 +196,7 @@ su_run() {
 try_source() { [ -f "$1" ] && . "$1" || :; }
 
 load_config() {
-    if [ "$XDG_CONFIG_HOME" ]; then
+    if [ "${XDG_CONFIG_HOME-}" ]; then
         try_source "$XDG_CONFIG_HOME/$program_name/env"
     else
         try_source "$HOME/.config/$program_name/env"
