@@ -262,6 +262,8 @@ spawn_root_chroot() {
 
     trap unmount_filesystems EXIT
 
+    chroot_cmd="mount -t proc proc $root_dir/proc &&"
+
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
         path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -277,9 +279,6 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
-    # TODO: Some systems (Ubuntu) make /dev/shm symlink to /run/shm which will
-    # become invalid after chroot. Figure out how to handle this gracefully.
-
     if [ "$share_system" ]; then
         su_run mkdir -p "$root_dir/sys"            || die
         su_run mount --rbind /sys "$root_dir/sys"  || die
@@ -291,12 +290,11 @@ spawn_root_chroot() {
         if [ -h "$root_dir/dev/shm" ]; then
             su_run rm "$root_dir/dev/shm"
         fi
-        su_run mkdir -p "$root_dir/dev/shm"
-        su_run mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm"
-        su_run chmod 1777 "$root_dir/dev/shm"
+        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
 
-        su_run mkdir -p "$root_dir/dev/pts"
-        su_run mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts"
+        chroot_cmd="${chroot_cmd} mount -t tmpfs -o nosuid,nodev,noexec shm $root_dir/dev/shm &&"
+        chroot_cmd="${chroot_cmd} chmod 1777 $root_dir/dev/shm &&"
+        chroot_cmd="${chroot_cmd} mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts $root_dir/dev/pts &&"
     fi
 
     if [ "$bind_home" ]; then
@@ -351,13 +349,11 @@ spawn_root_chroot() {
         cmd="/bin/bash -l"
     fi
 
-    chroot_cmd="mount -t proc proc $root_dir/proc &&"
     chroot_cmd="${chroot_cmd} $chroot --userspec=$userspec"
     chroot_cmd="${chroot_cmd} ${root_dir}"
     chroot_cmd="${chroot_cmd} ${cmd}"
 
-    # su_run $setarch env - $env unshare -pf sh -c $chroot_cmd
-    su_run $setarch env - $env sh -c $chroot_cmd
+    su_run $setarch env - $env unshare -pfm sh -c $chroot_cmd
 }
 
 spawn_root_docker() {
