@@ -72,12 +72,7 @@ parse_command_line() {
 
     while [ $# -gt 0 ]; do
         if [ "$parsing_command" ]; then
-            # eat first '--' after non option argument
-            if [ "$1" = '--' -a "$eoa" = "$#" ]; then
-                eoa=
-            else
-                container_command="${container_command}${S}${1}"
-            fi
+            container_command="${container_command}${S}${1}"
         else
             case $1 in
                 --)
@@ -123,7 +118,8 @@ parse_command_line() {
                             fi ;;
                     esac
                     parsing_command=1
-                    eoa=$(($#-1))
+                    # allow optional '--' after the first non-option argument
+                    [ "$2" = '--' ] && shift
                     ;;
             esac
         fi
