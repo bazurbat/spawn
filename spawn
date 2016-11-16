@@ -177,6 +177,13 @@ validate_environment() {
         [ -e "$gpg_agent_socket" ] ||
             die "gpg agent socket is not exists"
     fi
+
+    if [ "$with_x11" ]; then
+        [ "$DISPLAY" ] ||
+            die "passing of X11 environment is enabled but DISPLAY is not set"
+        [ -d "$xsock_dir" ] ||
+            die "X11 socket directory '$xsock_dir' is not exists"
+    fi
 }
 
 die() {
