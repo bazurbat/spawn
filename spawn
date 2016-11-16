@@ -127,7 +127,7 @@ parse_command_line() {
     done
 }
 
-check_arguments() {
+validate_environment() {
     [ "$container_type" ] ||
         die "unable to determine container type from the arguments"
     case $container_type in
@@ -405,7 +405,7 @@ if [ "$with_gpg_agent" ]; then
     gpg_agent_socket="${GPG_AGENT_INFO%%:*}"
 fi
 
-check_arguments
+validate_environment
 
 if [ "$umount_only" ]; then
     unmount_filesystems
