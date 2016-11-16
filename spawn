@@ -148,6 +148,8 @@ check_arguments() {
                 die "awk command was not found"
             [ "$(command -v tac)" ] ||
                 die "tac command was not found"
+            [ "$(command -v unshare)" ] ||
+                die "unshare command was not found"
 
             chroot=$(command -v chroot)
             [ "$chroot" ] ||
