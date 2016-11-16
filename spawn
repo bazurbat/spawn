@@ -246,22 +246,24 @@ fix_mtab() {
     fi
 }
 
-unmount_filesystems() {
-    local root
-    root=$(realpath "$root_dir")
+cleanup() {
+    local root=
 
-    for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
-    do
-        su_run umount "$mp" || true
-    done
+    if [ "$container_type" = 'chroot' ]; then
+        root="$(realpath "$root_dir")"
+        for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
+        do
+            su_run umount "$mp" || true
+        done
+    fi
+
+    rm -rf "$temp_dir"
 }
 
 spawn_root_chroot() {
     local IFS="$(printf '\n\t')"
     local userspec= path= setarch= env= ssh_sock_dir= gpg_sock_dir=
     local cmd= chroot_cmd= i=
-
-    trap unmount_filesystems EXIT
 
     chroot_cmd="mount -t proc proc $root_dir/proc &&"
 
@@ -408,11 +410,13 @@ fi
 validate_environment
 
 if [ "$cleanup_only" ]; then
-    unmount_filesystems
+    cleanup
     exit
 fi
 
 set_container_home
+
+trap cleanup EXIT
 
 [ -d "$temp_dir" ] || mkdir -p "$temp_dir"
 
