@@ -189,7 +189,7 @@ die() {
 }
 
 su_run() {
-    if [ "$UID" = "0" ]; then
+    if [ "${UID-}" = "0" ]; then
         "$@"
     else
         sudo "$@"
