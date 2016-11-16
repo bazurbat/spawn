@@ -19,7 +19,7 @@ with_ssh_agent=
 with_gpg_agent=
 with_pulseaudio=
 with_x11=
-umount_only=
+cleanup_only=
 share_system=
 bind_home=
 
@@ -48,7 +48,7 @@ OPTIONS:
   --with-gpg-agent      Pass GPG_AGENT_INFO variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --umount              Just unmount directories for the specified root name
+  --cleanup             Execute cleanup procedures only
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
 
@@ -94,8 +94,8 @@ parse_command_line() {
                     with_x11=1 ;;
                 --with-pulseaudio)
                     with_pulseaudio=1 ;;
-                --umount)
-                    umount_only=1 ;;
+                --cleanup)
+                    cleanup_only=1 ;;
                 --share-system)
                     share_system=1 ;;
                 --using-docker)
@@ -407,7 +407,7 @@ fi
 
 validate_environment
 
-if [ "$umount_only" ]; then
+if [ "$cleanup_only" ]; then
     unmount_filesystems
     exit
 fi
