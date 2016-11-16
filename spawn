@@ -21,6 +21,7 @@ with_pulseaudio=
 with_x11=
 umount_only=
 share_system=
+bind_home=
 
 # keep this constant to be able to resume Docker containers
 temp_dir="/var/tmp/${program_name}-$(id -u)"
