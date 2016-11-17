@@ -10,13 +10,24 @@ _spawn_complete() {
 --umount --share-system
 --using-docker --using-chroot'
 
+    compopt -o dirnames
+
     case $prev in
+        spawn)
+            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+            return ;;
         --arch)
-            COMPREPLY=($(compgen -W "x86 x86-64" -- "$cur")) ;;
+            COMPREPLY=($(compgen -W "x86 x86-64" -- "$cur"))
+            return ;;
         --bind-home)
-            COMPREPLY=($(compgen -A directory -- "$cur")) ;;
-        *)
-            COMPREPLY=($(compgen -W "$opts" -- "$cur")) ;;
+            COMPREPLY=()
+            return ;;
+    esac
+
+    case $cur in
+        -*)
+            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+            return ;;
     esac
 }
 
