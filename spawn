@@ -42,7 +42,7 @@ OPTIONS:
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-gpg-agent      Pass GPG_AGENT_INFO variable and bind the socket
+  --with-gpg-agent      Share GPG Agent with the host
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --cleanup             Execute cleanup procedures only
@@ -171,13 +171,6 @@ validate_environment() {
             die "$SSH_AUTH_SOCK is not exists"
     fi
 
-    if [ "$with_gpg_agent" ]; then
-        [ "$GPG_AGENT_INFO" ] ||
-            die "GPG_AGENT_INFO is not set"
-        [ -e "$gpg_agent_socket" ] ||
-            die "gpg agent socket is not exists"
-    fi
-
     if [ "$with_x11" ]; then
         [ "$DISPLAY" ] ||
             die "passing of X11 environment is enabled but DISPLAY is not set"
@@ -208,6 +201,18 @@ load_config() {
         try_source "$XDG_CONFIG_HOME/$program_name/env"
     else
         try_source "$HOME/.config/$program_name/env"
+    fi
+}
+
+set_gpg_agent_env() {
+    [ "$with_gpg_agent" ] || return 0
+
+    if [ "$(command -v gpgconf)" ]; then
+        # gpgconf versions before 2.1 do not support filtering on command line
+        gpg_agent_socket=$(gpgconf --list-dirs | awk -F: '/agent-socket/ { print $2 }')
+        GPG_AGENT_INFO="$gpg_agent_socket:123:1"
+    else
+        die "gpgconf command was not found"
     fi
 }
 
@@ -407,11 +412,7 @@ fi
 load_config
 
 parse_command_line "$@"
-
-if [ "$with_gpg_agent" ]; then
-    gpg_agent_socket="${GPG_AGENT_INFO%%:*}"
-fi
-
+set_gpg_agent_env
 validate_environment
 
 if [ "$cleanup_only" ]; then
