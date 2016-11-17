@@ -16,7 +16,6 @@ additional_args=
 
 root_arch=
 with_ssh_agent=
-with_gpg_agent=
 with_pulseaudio=
 with_x11=
 cleanup_only=
@@ -25,8 +24,6 @@ bind_home=
 
 xauth_file=
 xsock_dir='/tmp/.X11-unix'
-
-gpg_agent_socket=
 
 show_usage() {
     cat <<EOF
@@ -42,7 +39,6 @@ OPTIONS:
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-gpg-agent      Share GPG Agent with the host
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --cleanup             Execute cleanup procedures only
@@ -85,8 +81,6 @@ parse_command_line() {
                     bind_home="$2"; shift ;;
                 --with-ssh-agent)
                     with_ssh_agent=1 ;;
-                --with-gpg-agent)
-                    with_gpg_agent=1 ;;
                 --with-x11)
                     with_x11=1 ;;
                 --with-pulseaudio)
@@ -204,18 +198,6 @@ load_config() {
     fi
 }
 
-set_gpg_agent_env() {
-    [ "$with_gpg_agent" ] || return 0
-
-    if [ "$(command -v gpgconf)" ]; then
-        # gpgconf versions before 2.1 do not support filtering on command line
-        gpg_agent_socket=$(gpgconf --list-dirs | awk -F: '/agent-socket/ { print $2 }')
-        GPG_AGENT_INFO="$gpg_agent_socket:123:1"
-    else
-        die "gpgconf command was not found"
-    fi
-}
-
 set_container_home() {
     if [ "$container_user" = 'root' ]; then
         container_home="/root"
@@ -267,7 +249,7 @@ cleanup() {
 
 spawn_root_chroot() {
     local IFS="$S"
-    local userspec= path= setarch= env= ssh_sock_dir= gpg_sock_dir=
+    local userspec= path= setarch= env= ssh_sock_dir=
     local cmd= chroot_cmd= i=
 
     if [ "$container_user" = 'root' ]; then
@@ -325,13 +307,6 @@ EOF
         su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
     fi
 
-    if [ "$with_gpg_agent" ]; then
-        env="${env}${S}GPG_AGENT_INFO=$GPG_AGENT_INFO"
-        gpg_sock_dir=$(dirname "$gpg_agent_socket")
-        su_run mkdir -p "$root_dir/$gpg_sock_dir" || die
-        su_run mount --bind "$gpg_sock_dir" "$root_dir/$gpg_sock_dir" || die
-    fi
-
     if [ "$with_x11" ]; then
         env="${env}${S}DISPLAY=$DISPLAY"
         env="${env}${S}XAUTHORITY=$xauth_file"
@@ -384,11 +359,6 @@ spawn_root_docker() {
         args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
     fi
 
-    if [ "$with_gpg_agent" ]; then
-        args="${args}${S}--env=GPG_AGENT_INFO=$GPG_AGENT_INFO"
-        args="${args}${S}--volume=$gpg_agent_socket:$gpg_agent_socket"
-    fi
-
     if [ "$with_x11" ]; then
         args="${args}${S}--env=DISPLAY=$DISPLAY"
         args="${args}${S}--env=XAUTHORITY=$xauth_file"
@@ -412,7 +382,6 @@ fi
 load_config
 
 parse_command_line "$@"
-set_gpg_agent_env
 validate_environment
 
 if [ "$cleanup_only" ]; then
