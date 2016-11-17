@@ -116,7 +116,7 @@ parse_command_line() {
                     esac
                     parsing_command=1
                     # allow optional '--' after the first non-option argument
-                    [ "$2" = '--' ] && shift
+                    [ "${2-}" = '--' ] && shift
                     ;;
             esac
         fi
