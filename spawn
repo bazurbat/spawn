@@ -261,11 +261,9 @@ cleanup() {
 }
 
 spawn_root_chroot() {
-    local IFS="$(printf '\n\t')"
+    local IFS="$S"
     local userspec= path= setarch= env= ssh_sock_dir= gpg_sock_dir=
     local cmd= chroot_cmd= i=
-
-    chroot_cmd="mount -t proc proc $root_dir/proc &&"
 
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
@@ -282,6 +280,8 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
+    chroot_cmd="mount -t proc proc \"$root_dir/proc\" &&"
+
     if [ "$share_system" ]; then
         su_run mkdir -p "$root_dir/sys"            || die
         su_run mount --rbind /sys "$root_dir/sys"  || die
@@ -295,9 +295,12 @@ spawn_root_chroot() {
         fi
         su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
 
-        chroot_cmd="${chroot_cmd} mount -t tmpfs -o nosuid,nodev,noexec shm $root_dir/dev/shm &&"
-        chroot_cmd="${chroot_cmd} chmod 1777 $root_dir/dev/shm &&"
-        chroot_cmd="${chroot_cmd} mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts $root_dir/dev/pts &&"
+        chroot_cmd="$chroot_cmd $(cat <<EOF
+mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" &&
+chmod 1777 "$root_dir/dev/shm" &&
+mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts" &&
+EOF
+)"
     fi
 
     if [ "$bind_home" ]; then
@@ -346,17 +349,19 @@ spawn_root_chroot() {
 
     if [ "$container_command" ]; then
         for i in $container_command; do
+            i=$(printf "$i" | sed "s/'/'\\\''/g")
             cmd="$cmd '$i'"
         done
     else
         cmd="/bin/bash -l"
     fi
 
-    chroot_cmd="${chroot_cmd} $chroot --userspec=$userspec"
-    chroot_cmd="${chroot_cmd} ${root_dir}"
-    chroot_cmd="${chroot_cmd} ${cmd}"
+    chroot_cmd="$chroot_cmd $(cat <<EOF
+"$chroot" --userspec="$userspec" "$root_dir" $cmd
+EOF
+)"
 
-    su_run $setarch env - $env unshare -pfm sh -c $chroot_cmd
+    su_run $setarch env - $env unshare -pfm sh -c "$chroot_cmd"
 }
 
 spawn_root_docker() {
