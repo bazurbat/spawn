@@ -329,7 +329,7 @@ EOF
 
     if [ "$container_command" ]; then
         for i in $container_command; do
-            i=$(printf "$i" | sed "s/'/'\\\''/g")
+            i=$(printf "%s" "$i" | sed "s/'/'\\\''/g")
             cmd="$cmd '$i'"
         done
     else
