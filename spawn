@@ -198,6 +198,25 @@ load_config() {
     fi
 }
 
+passwd_exists() {
+    test -f "$root_dir/etc/passwd"
+}
+
+user_exists() {
+    grep -q "^$1:" "$root_dir/etc/passwd"
+}
+
+find_home_dir() {
+    local name="$1"
+    [ -f "$root_dir/etc/passwd" ] || return
+    while IFS=: read -r user pass uid gid gecos home shell; do
+        if [ "$user" = "$name" ]; then
+            echo "$home"
+            break
+        fi
+    done < "$root_dir/etc/passwd"
+}
+
 set_container_home() {
     if [ "$container_user" = 'root' ]; then
         container_home="/root"
@@ -260,6 +279,10 @@ spawn_root_chroot() {
         path="/usr/local/bin:/usr/bin:/bin"
     fi
 
+    if ! passwd_exists || ! user_exists "$container_user"; then
+        die "the specified user '$container_user' is not found inside the chroot"
+    fi
+
     case $root_arch in
         x86|i?86)
             setarch="linux32" ;;
@@ -291,7 +314,11 @@ EOF
     fi
 
     if [ "$bind_home" ]; then
-        su_run mount --bind "$bind_home" "$root_dir/$container_home"
+        container_home=$(find_home_dir "$container_user")
+        [ "$container_home" ] ||
+            die "failed to find user's home directory"
+        su_run mkdir -p "$root_dir/$container_home" || die
+        su_run mount --bind "$bind_home" "$root_dir/$container_home" || die
     fi
 
     env="${env}${S}TERM=$TERM"
