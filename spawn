@@ -266,7 +266,7 @@ cleanup() {
 }
 
 spawn_root_nspawn() {
-    echo nspawn
+    su_run systemd-nspawn -D "$root_dir"
 }
 
 spawn_root_chroot() {
