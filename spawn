@@ -123,6 +123,8 @@ validate_environment() {
             [ "$container_name" ] ||
                 die "container name was not specified"
             ;;
+        nspawn)
+            ;;
         chroot)
             [ "$root_dir" ] ||
                 die "root directory was not specified"
@@ -261,6 +263,10 @@ cleanup() {
             su_run umount "$mp" || true
         done
     fi
+}
+
+spawn_root_nspawn() {
+    echo nspawn
 }
 
 spawn_root_chroot() {
@@ -426,7 +432,11 @@ fi
 if [ "$container_name" ]; then
     spawn_root_docker
 elif [ "$root_dir" ]; then
-    spawn_root_chroot
+    if [ "$container_type" = 'nspawn' ]; then
+        spawn_root_nspawn
+    else
+        spawn_root_chroot
+    fi
 else
     die "container name or chroot directory is not specified"
 fi
