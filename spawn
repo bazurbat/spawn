@@ -91,6 +91,8 @@ parse_command_line() {
                     share_system=1 ;;
                 --using-docker)
                     container_type='docker' ;;
+                --using-nspawn)
+                    container_type='nspawn' ;;
                 --using-chroot)
                     container_type='chroot' ;;
                 -*)

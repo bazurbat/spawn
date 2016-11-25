@@ -8,7 +8,7 @@ _spawn_complete() {
 --arch --bind-home
 --with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
 --umount --share-system
---using-docker --using-chroot'
+--using-docker --using-nspawn --using-chroot'
 
     compopt -o dirnames
 
