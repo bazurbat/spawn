@@ -96,18 +96,13 @@ parse_command_line() {
                 -*)
                     additional_args="${additional_args}${S}$1" ;;
                 *)
-                    case $container_type in
-                        docker) container_name="$1" ;;
-                        chroot) root_dir="$1" ;;
-                        *)
-                            if [ -d "$1" ]; then
-                                container_type='chroot'
-                                root_dir="$1"
-                            else
-                                container_type='docker'
-                                container_name="$1"
-                            fi ;;
-                    esac
+                    if [ -d "$1" ]; then
+                        container_type="${container_type:-chroot}"
+                        root_dir="$1"
+                    else
+                        container_type="${container_type:-docker}"
+                        container_name="$1"
+                    fi
                     parsing_command=1
                     # allow optional '--' after the first non-option argument
                     [ "${2-}" = '--' ] && shift
