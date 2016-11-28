@@ -89,6 +89,8 @@ parse_command_line() {
                     cleanup_only=1 ;;
                 --share-system)
                     share_system=1 ;;
+                --boot)
+                    spawn_boot=1 ;;
                 --using-docker)
                     container_type='docker' ;;
                 --using-nspawn)
@@ -189,6 +191,21 @@ su_run() {
 
 try_source() { [ -f "$1" ] && . "$1" || :; }
 
+escape_quote() {
+    local arg= result=
+    for arg in "$@"; do
+        arg=$(printf "%s" "$arg" | sed "s/'/'\\\''/g")
+        result="$result '$arg'"
+    done
+    echo "$result"
+}
+
+print_args() {
+    printf "%d: " $#
+    printf "<%s> " "$@"
+    printf "\n"
+}
+
 load_config() {
     if [ "${XDG_CONFIG_HOME-}" ]; then
         try_source "$XDG_CONFIG_HOME/$program_name/env"
@@ -224,6 +241,24 @@ set_container_home() {
     fi
 }
 
+get_pa_socket() {
+    if [ "$(command -v pactl)" ]; then
+        pactl info | awk 'BEGIN { FS=":" }; /Server String: unix:/ { print $3 }'
+    fi
+}
+
+check_pa_socket() {
+    [ -S "$1" ] || die "PulseAudio socket '$1' does not exist"
+}
+
+get_root_command() {
+    if [ "${container_command-}" ]; then
+        echo "$(escape_quote $container_command)"
+    else
+        echo /bin/bash$S-l
+    fi
+}
+
 extract_xauth() {
     xauth_file=$(mktemp)
     # Use wildcard authentication family because hostname of container can
@@ -233,9 +268,6 @@ extract_xauth() {
 }
 
 copy_pulseaudio_cookie() {
-    [ -d "/run/user/$UID/pulse" ] ||
-        die "Pulseaudio runtime directory is not exists"
-
     mkdir -p "$root_dir/$container_home/.config/pulse"
     cp -f "$HOME/.config/pulse/cookie" \
         "$root_dir/$container_home/.config/pulse/cookie"
@@ -266,7 +298,59 @@ cleanup() {
 }
 
 spawn_root_nspawn() {
-    su_run systemd-nspawn -D "$root_dir"
+    local IFS="$S"
+    local A= pa_socket=
+
+    # systemd-nspawn runs 'getent passwd <user>' inside the container to get
+    # passwd entry for the user or fails with "Failed to resolve user <user>"
+    if [ "$container_user" ]; then
+        A="$A$S--user=$container_user"
+    fi
+
+    if ! passwd_exists || ! user_exists "$container_user"; then
+        die "the specified user '$container_user' is not found inside the chroot"
+    fi
+
+    if [ "$share_system" ]; then
+        A="$A$S--share-system"
+    fi
+
+    if [ "$bind_home" ]; then
+        container_home=$(find_home_dir "$container_user")
+        [ "$container_home" ] ||
+            die "failed to find user's home directory"
+        su_run mkdir -p "$root_dir/$container_home" || die
+        A="$A$S--bind=$bind_home:$container_home"
+    fi
+
+    if [ "$with_ssh_agent" ]; then
+        A="$A$S--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+        A="$A$S--bind=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
+    fi
+
+    if [ "$with_x11" ]; then
+        A="$A$S--env=DISPLAY=$DISPLAY"
+        A="$A$S--env=XAUTHORITY=$xauth_file"
+        # disable Qt's usage of shared memory which we do not expose
+        A="$A$S--env=QT_X11_NO_MITSHM=1"
+        A="$A$S--volume=$xauth_file:$xauth_file"
+        A="$A$S--volume=$xsock_dir:$xsock_dir"
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        pa_socket=$(get_pa_socket)
+        check_pa_socket "$pa_socket"
+        A="$A$S--setenv=PULSE_SERVER=$pa_socket"
+        A="$A$S--bind=$pa_socket"
+        # copy_pulseaudio_cookie
+    fi
+
+    if [ "${spawn_boot-}" ]; then
+        A="$A$S--boot"
+    fi
+
+    su_run systemd-nspawn $A $additional_args -D "$root_dir" \
+        /bin/sh -c $(get_root_command)
 }
 
 spawn_root_chroot() {
