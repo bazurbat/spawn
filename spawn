@@ -441,17 +441,8 @@ EOF
         su_run mount --bind "$pulseaudio_server_dir" "$root_dir/$pulseaudio_dir" || die
     fi
 
-    if [ "$container_command" ]; then
-        for i in $container_command; do
-            i=$(printf "%s" "$i" | sed "s/'/'\\\''/g")
-            cmd="$cmd '$i'"
-        done
-    else
-        cmd="/bin/bash -l"
-    fi
-
     chroot_cmd="$chroot_cmd $(cat <<EOF
-"$chroot" --userspec="$userspec" "$root_dir" $cmd
+"$chroot" --userspec="$userspec" "$root_dir" $(get_root_command)
 EOF
 )"
 
