@@ -255,7 +255,7 @@ get_root_command() {
     if [ "${container_command-}" ]; then
         echo "$(escape_quote $container_command)"
     else
-        echo /bin/bash$S-l
+        echo '/bin/sh -c "cd && exec /bin/bash -l"'
     fi
 }
 
