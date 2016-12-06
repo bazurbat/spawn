@@ -299,7 +299,7 @@ cleanup() {
 
 spawn_root_nspawn() {
     local IFS="$S"
-    local A= pa_socket=
+    local A= pa_socket= cmd=
 
     # systemd-nspawn runs 'getent passwd <user>' inside the container to get
     # passwd entry for the user or fails with "Failed to resolve user <user>"
@@ -349,8 +349,13 @@ spawn_root_nspawn() {
         A="$A$S--boot"
     fi
 
-    su_run systemd-nspawn $A $additional_args -D "$root_dir" \
-        /bin/sh -c $(get_root_command)
+    if [ "${container_command-}" ]; then
+        cmd="$container_command"
+    else
+        cmd="cd && /bin/bash -l"
+    fi
+
+    su_run systemd-nspawn $A $additional_args -D "$root_dir" $cmd
 }
 
 spawn_root_chroot() {
