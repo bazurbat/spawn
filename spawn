@@ -329,12 +329,12 @@ spawn_root_nspawn() {
     fi
 
     if [ "$with_x11" ]; then
-        A="$A$S--env=DISPLAY=$DISPLAY"
-        A="$A$S--env=XAUTHORITY=$xauth_file"
+        A="$A$S--setenv=DISPLAY=$DISPLAY"
+        A="$A$S--setenv=XAUTHORITY=$xauth_file"
         # disable Qt's usage of shared memory which we do not expose
-        A="$A$S--env=QT_X11_NO_MITSHM=1"
-        A="$A$S--volume=$xauth_file:$xauth_file"
-        A="$A$S--volume=$xsock_dir:$xsock_dir"
+        A="$A$S--setenv=QT_X11_NO_MITSHM=1"
+        A="$A$S--bind=$xauth_file:$xauth_file"
+        A="$A$S--bind=$xsock_dir:$xsock_dir"
     fi
 
     if [ "$with_pulseaudio" ]; then
