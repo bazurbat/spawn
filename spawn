@@ -243,12 +243,15 @@ set_container_home() {
 
 get_pa_socket() {
     if [ "$(command -v pactl)" ]; then
-        pactl info | awk 'BEGIN { FS=":" }; /Server String: unix:/ { print $3 }'
+        pactl info 2>/dev/null | \
+            awk '/Server String: / { print $3 }' | \
+            sed 's/^unix://'
     fi
 }
 
-check_pa_socket() {
+validate_pa_socket() {
     [ -S "$1" ] || die "PulseAudio socket '$1' does not exist"
+    echo "$1"
 }
 
 get_root_command() {
@@ -338,8 +341,7 @@ spawn_root_nspawn() {
     fi
 
     if [ "$with_pulseaudio" ]; then
-        pa_socket=$(get_pa_socket)
-        check_pa_socket "$pa_socket"
+        pa_socket=$(validate_pa_socket "$(get_pa_socket)")
         A="$A$S--setenv=PULSE_SERVER=$pa_socket"
         A="$A$S--bind=$pa_socket"
         # copy_pulseaudio_cookie
@@ -361,7 +363,7 @@ spawn_root_nspawn() {
 spawn_root_chroot() {
     local IFS="$S"
     local userspec= path= setarch= env= ssh_sock_dir=
-    local cmd= chroot_cmd= i=
+    local cmd= chroot_cmd= i= pa_sock= pa_sock_dir=
 
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
@@ -438,14 +440,11 @@ EOF
     fi
 
     if [ "$with_pulseaudio" ]; then
-        pulseaudio_server_dir=$(dirname $(pactl info | awk 'BEGIN { FS=":" }; /Server String/ { print $3 }'))
-        pulseaudio_dir="/run/pulse"
-
-        [ "$pulseaudio_server_dir" ] || die
-        [ -d "$pulseaudio_server_dir" ] || die
-        env="${env}${S}PULSE_SERVER=$pulseaudio_dir/native"
-        su_run mkdir -p "$root_dir/$pulseaudio_dir" || die
-        su_run mount --bind "$pulseaudio_server_dir" "$root_dir/$pulseaudio_dir" || die
+        pa_sock=$(validate_pa_socket "$(get_pa_socket)")
+        pa_sock_dir=$(dirname "$pa_sock")
+        env="${env}${S}PULSE_SERVER=$pa_sock"
+        su_run mkdir -p "$root_dir/$pa_sock_dir" || die
+        su_run mount --bind "$pa_sock_dir" "$root_dir/$pa_sock_dir" || die
     fi
 
     chroot_cmd="$chroot_cmd $(cat <<EOF
