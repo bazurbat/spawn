@@ -369,7 +369,7 @@ spawn_root_chroot() {
         userspec="0:0"
         path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     else
-        userspec="$USER:users"
+        userspec="$container_user:users"
         path="/usr/local/bin:/usr/bin:/bin"
     fi
 
