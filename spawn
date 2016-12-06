@@ -375,6 +375,8 @@ spawn_root_chroot() {
         die "the specified user '$container_user' is not found inside the chroot"
     fi
 
+    container_home="$(find_home_dir "$container_user")"
+
     case $root_arch in
         x86|i?86)
             setarch="linux32" ;;
