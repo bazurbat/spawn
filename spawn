@@ -384,7 +384,7 @@ spawn_root_nspawn() {
     if [ "${container_command-}" ]; then
         cmd="$container_command"
     else
-        cmd="cd && /bin/bash -l"
+        cmd="/bin/sh${S}-c${S}cd && exec /bin/bash -l"
     fi
 
     su_run systemd-nspawn $A $additional_args -D "$root_dir" $cmd
