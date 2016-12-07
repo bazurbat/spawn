@@ -195,7 +195,7 @@ escape_quote() {
     local arg= result=
     for arg in "$@"; do
         arg=$(printf "%s" "$arg" | sed "s/'/'\\\''/g")
-        result="$result '$arg'"
+        result="$result${S}'$arg'"
     done
     echo "$result"
 }
@@ -282,14 +282,6 @@ get_pa_socket() {
 validate_pa_socket() {
     [ -S "$1" ] || die "PulseAudio socket '$1' does not exist"
     echo "$1"
-}
-
-get_root_command() {
-    if [ "${container_command-}" ]; then
-        echo "$(escape_quote $container_command)"
-    else
-        echo '/bin/sh -c "cd && exec /bin/bash -l"'
-    fi
 }
 
 extract_xauth() {
@@ -393,7 +385,7 @@ spawn_root_nspawn() {
 spawn_root_chroot() {
     local IFS="$S"
     local userspec= path= setarch= env= ssh_sock_dir=
-    local cmd= chroot_cmd= i= pa_sock= pa_sock_dir=
+    local cmd= mount_cmd= chroot_cmd= i= pa_sock= pa_sock_dir=
 
     if [ "$container_user" = 'root' ]; then
         userspec="0:0"
@@ -416,7 +408,7 @@ spawn_root_chroot() {
             setarch="linux64" ;;
     esac
 
-    chroot_cmd="mount -t proc proc \"$root_dir/proc\" &&"
+    mount_cmd="mount -t proc proc \"$root_dir/proc\" &&"
 
     if [ "$share_system" ]; then
         su_run mkdir -p "$root_dir/sys"            || die
@@ -431,9 +423,8 @@ spawn_root_chroot() {
         fi
         su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
 
-        chroot_cmd="$chroot_cmd $(cat <<EOF
-mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" &&
-chmod 1777 "$root_dir/dev/shm" &&
+        mount_cmd="$mount_cmd $(cat <<EOF
+mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" && \
 mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts" &&
 EOF
 )"
@@ -476,12 +467,17 @@ EOF
         su_run mount --bind "$(dirname "$pa_sock")" "$root_dir/$pa_sock_dir" || die
     fi
 
-    chroot_cmd="$chroot_cmd $(cat <<EOF
-"$chroot" --userspec="$userspec" "$root_dir" $(get_root_command)
-EOF
-)"
+    if [ "${container_command-}" ]; then
+        cmd=$(escape_quote $container_command)
+    else
+        cmd="/bin/sh${S}-c${S}'cd && exec /bin/bash -l'"
+    fi
 
-    su_run $setarch env - $env unshare -pfm sh -c "$chroot_cmd"
+    chroot_cmd="\"$chroot\" --userspec=\"$userspec\" \"$root_dir\""
+
+    mount_cmd="$mount_cmd $chroot_cmd $cmd"
+
+    su_run $setarch env - $env unshare -m /bin/sh -c "$mount_cmd"
 }
 
 spawn_root_docker() {
