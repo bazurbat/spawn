@@ -223,19 +223,8 @@ user_exists() {
     grep -q "^$1:" "$root_dir/etc/passwd"
 }
 
-find_home_dir() {
-    local name="$1"
-    [ -f "$root_dir/etc/passwd" ] || return
-    while IFS=: read -r user pass uid gid gecos home shell; do
-        if [ "$user" = "$name" ]; then
-            echo "$home"
-            break
-        fi
-    done < "$root_dir/etc/passwd"
-}
-
 find_user_info() {
-    local field="${1:-home}"
+    local field="$1"
     if [ "$root_dir" ]; then
         [ -f "$root_dir/etc/passwd" ] || return
         while IFS=: read -r user pass uid gid gecos home shell; do
@@ -386,7 +375,7 @@ spawn_root_nspawn() {
     fi
 
     if [ "$bind_home" ]; then
-        container_home=$(find_home_dir "$container_user")
+        container_home=$(find_user_info home)
         [ "$container_home" ] ||
             die "failed to find user's home directory"
         su_run mkdir -p "$root_dir/$container_home" || die
@@ -447,7 +436,7 @@ spawn_root_chroot() {
         die "the specified user '$container_user' is not found inside the chroot"
     fi
 
-    container_home="$(find_home_dir "$container_user")"
+    container_home="$(find_user_info home)"
 
     case $root_arch in
         x86|i?86)
@@ -479,7 +468,7 @@ EOF
     fi
 
     if [ "$bind_home" ]; then
-        container_home=$(find_home_dir "$container_user")
+        container_home=$(find_user_info home)
         [ "$container_home" ] ||
             die "failed to find user's home directory"
         su_run mkdir -p "$root_dir/$container_home" || die
