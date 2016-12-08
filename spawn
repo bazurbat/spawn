@@ -11,7 +11,7 @@ container_type=
 container_name=
 container_user="dev"
 container_group="users"
-container_home="/home/$container_user"
+container_home=
 container_command=
 additional_args=
 
@@ -262,14 +262,6 @@ get_userspec() {
     echo "$uid:$gid"
 }
 
-set_container_home() {
-    if [ "$container_user" = 'root' ]; then
-        container_home="/root"
-    else
-        container_home="/home/$container_user"
-    fi
-}
-
 in_mkdir() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
     su_run install -o $uid -g $gid -d "$1" || die
@@ -432,9 +424,6 @@ spawn_root_nspawn() {
     fi
 
     if [ "$bind_home" ]; then
-        container_home=$(find_user_info home)
-        [ "$container_home" ] ||
-            die "failed to find user's home directory"
         su_run mkdir -p "$root_dir/$container_home" || die
         A="$A$S--bind=$bind_home:$container_home"
     fi
@@ -482,8 +471,6 @@ spawn_root_chroot() {
         die "the specified user '$container_user' is not found inside the chroot"
     fi
 
-    container_home="$(find_user_info home)"
-
     case $root_arch in
         x86|i?86)
             setarch="linux32" ;;
@@ -514,9 +501,6 @@ EOF
     fi
 
     if [ "$bind_home" ]; then
-        container_home=$(find_user_info home)
-        [ "$container_home" ] ||
-            die "failed to find user's home directory"
         su_run mkdir -p "$root_dir/$container_home" || die
         su_run mount --bind "$bind_home" "$root_dir/$container_home" || die
     fi
@@ -609,9 +593,11 @@ if [ "$cleanup_only" ]; then
     exit
 fi
 
-set_container_home
-
 trap cleanup EXIT
+
+container_home=$(find_user_info home)
+[ "$container_home" ] ||
+    die "failed to find user's home directory"
 
 if [ "$with_x11" ]; then
     extract_xauth
