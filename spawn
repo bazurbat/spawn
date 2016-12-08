@@ -383,10 +383,29 @@ setup_pa_env() {
     eval "${1}=\"\$${1}$S$PA_A\""
 }
 
+setup_home_env() {
+    local HOME_A=
+
+    [ "$bind_home" ] || return 0
+
+    if [ "$root_dir" ]; then
+        in_mkdir "$root_dir/$container_home"
+    fi
+
+    if [ "$container_type" = "chroot" ]; then
+        in_mount --bind "$bind_home" "$root_dir/$container_home"
+    else
+        HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$container_home")"
+    fi
+
+    eval "${1}=\"\$${1}$S$HOME_A\""
+}
+
 setup_env() {
-    setup_ssh_env "$1"
-    setup_x11_env "$1"
-    setup_pa_env  "$1"
+    setup_ssh_env  "$1"
+    setup_x11_env  "$1"
+    setup_pa_env   "$1"
+    setup_home_env "$1"
 }
 
 make_user_arg() {
@@ -447,11 +466,6 @@ spawn_root_nspawn() {
         A="$A$S--share-system"
     fi
 
-    if [ "$bind_home" ]; then
-        su_run mkdir -p "$root_dir/$container_home" || die
-        A="$A$S--bind=$bind_home:$container_home"
-    fi
-
     setup_env A
 
     if [ "${spawn_boot-}" ]; then
@@ -506,11 +520,6 @@ EOF
 )"
     fi
 
-    if [ "$bind_home" ]; then
-        su_run mkdir -p "$root_dir/$container_home" || die
-        su_run mount --bind "$bind_home" "$root_dir/$container_home" || die
-    fi
-
     env="${env}${S}TERM=$TERM"
     env="${env}${S}HOME=$container_home"
     env="${env}${S}USER=$container_user"
@@ -538,13 +547,9 @@ EOF
 
 spawn_root_docker() {
     local IFS="$(printf '\n\t')"
-    local A= pa_sock= in_pa_sock=
+    local A=
 
     A="--user=$container_user"
-
-    if [ "$bind_home" ]; then
-        A="${A}${S}--volume=$bind_home:$container_home"
-    fi
 
     setup_env A
 
