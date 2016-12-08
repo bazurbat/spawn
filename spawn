@@ -389,6 +389,14 @@ setup_env() {
     setup_pa_env  "$1"
 }
 
+make_user_arg() {
+    if [ "$container_type" = "chroot" ]; then
+        echo "--userspec=$container_user"
+    else
+        echo "--user=$container_user"
+    fi
+}
+
 extract_xauth() {
     xauth_file=$(mktemp)
     # Use wildcard authentication family because hostname of container can
@@ -461,17 +469,9 @@ spawn_root_nspawn() {
 
 spawn_root_chroot() {
     local IFS="$S"
-    local userspec= path= setarch= env= ssh_sock_dir=
+    local path= setarch= env= ssh_sock_dir=
     local cmd= mount_cmd= chroot_cmd= i=
     local pa_sock= in_pa_sock=
-
-    if [ "$container_user" = 'root' ]; then
-        userspec="0:0"
-        path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    else
-        userspec="$container_user:users"
-        path="/usr/local/bin:/usr/bin:/bin"
-    fi
 
     if ! passwd_exists || ! user_exists "$container_user"; then
         die "the specified user '$container_user' is not found inside the chroot"
@@ -515,7 +515,11 @@ EOF
     env="${env}${S}HOME=$container_home"
     env="${env}${S}USER=$container_user"
     env="${env}${S}LOGNAME=$container_user"
-    env="${env}${S}PATH=$path"
+    if [ "$container_user" = "root" ]; then
+        env="${env}${S}PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    else
+        env="${env}${S}PATH=/usr/local/bin:/usr/bin:/bin"
+    fi
 
     setup_env env
 
@@ -525,7 +529,7 @@ EOF
         cmd="/bin/sh${S}-c${S}'cd && exec /bin/bash -l'"
     fi
 
-    chroot_cmd="\"$chroot\" --userspec=\"$userspec\" \"$root_dir\""
+    chroot_cmd="\"$chroot\" $(make_user_arg) \"$root_dir\""
 
     mount_cmd="$mount_cmd $chroot_cmd $cmd"
 
