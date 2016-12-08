@@ -236,13 +236,34 @@ find_home_dir() {
 
 find_user_info() {
     local field="${1:-home}"
-    [ -f "$root_dir/etc/passwd" ] || return
-    while IFS=: read -r user pass uid gid gecos home shell; do
-        if [ "$user" = "$container_user" ]; then
-            eval "echo \$$field"
-            break
-        fi
-    done < "$root_dir/etc/passwd"
+    if [ "$root_dir" ]; then
+        [ -f "$root_dir/etc/passwd" ] || return
+        while IFS=: read -r user pass uid gid gecos home shell; do
+            if [ "$user" = "$container_user" ]; then
+                eval "echo \$$field"
+                break
+            fi
+        done < "$root_dir/etc/passwd"
+    else
+        case $container_user in
+            root)
+                case $field in
+                     user) echo root ;;
+                      uid) echo 0 ;;
+                      gid) echo 0 ;;
+                     home) echo /root ;;
+                    shell) echo /bin/bash ;;
+                esac ;;
+            *)
+                case $field in
+                     user) echo $container_user ;;
+                      uid) echo 1000 ;;
+                      gid) echo 100  ;;
+                     home) echo /home/$container_user ;;
+                    shell) echo /bin/bash ;;
+                esac ;;
+        esac
+    fi
 }
 
 get_userspec() {
@@ -284,7 +305,7 @@ get_config_dir() {
 
 get_runtime_dir() {
     local uid="$(find_user_info uid)"
-    local runtime_dir="/run/user/$uid"
+    local runtime_dir="/run/user/${uid:?}"
 
     echo "$runtime_dir${1:+/$1}"
 }
@@ -512,7 +533,7 @@ EOF
 
 spawn_root_docker() {
     local IFS="$(printf '\n\t')"
-    local args=
+    local args= pa_sock= in_pa_sock=
 
     args="--user=$container_user"
 
@@ -532,6 +553,14 @@ spawn_root_docker() {
         args="${args}${S}--env=QT_X11_NO_MITSHM=1"
         args="${args}${S}--volume=$xauth_file:$xauth_file"
         args="${args}${S}--volume=$xsock_dir:$xsock_dir"
+    fi
+
+    if [ "$with_pulseaudio" ]; then
+        pa_sock=$(get_pa_socket)
+        validate_pa_socket "$pa_sock"
+        in_pa_sock=$(get_in_pa_socket)
+        args="$args$S--env=PULSE_SERVER=$in_pa_sock"
+        args="$args$S--volume=$pa_sock:$in_pa_sock"
     fi
 
     docker run --rm -it \
