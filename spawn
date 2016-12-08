@@ -317,8 +317,11 @@ setup_ssh_env() {
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
 
-    if [ "$container_type" = "chroot" ]; then
+    if [ "$root_dir" ]; then
         in_touch "$root_dir/$SSH_AUTH_SOCK"
+    fi
+
+    if [ "$container_type" = "chroot" ]; then
         in_mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK"
     else
         SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
@@ -338,10 +341,13 @@ setup_x11_env() {
     # disable Qt's usage of shared memory which we do not expose
     X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
 
-    if [ "$container_type" = "chroot" ]; then
+    if [ "$root_dir" ]; then
         in_touch "$root_dir/$xauth_file"
-        in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
         in_mkdir "$root_dir/$xsock_dir"
+    fi
+
+    if [ "$container_type" = "chroot" ]; then
+        in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
         in_mount --bind "$xsock_dir" "$root_dir/$xsock_dir"
     else
         X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$xauth_file")"
@@ -368,10 +374,13 @@ setup_pa_env() {
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
 
-    if [ "$container_type" = "chroot" ]; then
+    if [ "$root_dir" ]; then
         in_touch "$root_dir/$in_pa_sock"
-        in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
         in_touch "$root_dir/$in_cookie_file"
+    fi
+
+    if [ "$container_type" = "chroot" ]; then
+        in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
         in_mount --bind "$cookie_file" "$root_dir/$in_cookie_file"
     else
         PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
