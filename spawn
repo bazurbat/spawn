@@ -286,6 +286,63 @@ in_mount() {
     su_run mount "$@" || die
 }
 
+make_env_arg() {
+    local value="$1"
+    case $container_type in
+        chroot) ;;
+        nspawn) echo "--setenv=$value" ;;
+        docker) echo "--env=$value" ;;
+    esac
+}
+
+make_bind_arg() {
+    local value="$1"
+    case $container_type in
+        chroot) ;;
+        nspawn) echo "--bind=$value" ;;
+        docker) echo "--volume=$value" ;;
+    esac
+}
+
+make_ssh_args() {
+    local A=
+
+    A="$A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
+    A="$A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
+
+    echo "$A"
+}
+
+make_x11_args() {
+    local A=
+
+    A="$A$S$(make_env_arg "DISPLAY=$DISPLAY")"
+    A="$A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
+
+    # disable Qt's usage of shared memory which we do not expose
+    A="$A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
+
+    A="$A$S$(make_bind_arg "$xauth_file:$xauth_file")"
+    A="$A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
+
+    echo "$A"
+}
+
+make_pa_args() {
+    local A= pa_sock= in_pa_sock=
+
+    pa_sock=$(get_pa_socket)
+    validate_pa_socket "$pa_sock"
+    in_pa_sock="$(get_in_pa_socket)"
+
+    A="$A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
+    A="$A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
+
+    # copy_pa_cookie
+
+    echo "$A"
+}
+
 get_config_dir() {
     local config_dir="/home/$container_user/.config"
 
@@ -383,26 +440,15 @@ spawn_root_nspawn() {
     fi
 
     if [ "$with_ssh_agent" ]; then
-        A="$A$S--setenv=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-        A="$A$S--bind=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
+        A="$A$S$(make_ssh_args)"
     fi
 
     if [ "$with_x11" ]; then
-        A="$A$S--setenv=DISPLAY=$DISPLAY"
-        A="$A$S--setenv=XAUTHORITY=$xauth_file"
-        # disable Qt's usage of shared memory which we do not expose
-        A="$A$S--setenv=QT_X11_NO_MITSHM=1"
-        A="$A$S--bind=$xauth_file:$xauth_file"
-        A="$A$S--bind=$xsock_dir:$xsock_dir"
+        A="$A$S$(make_x11_args)"
     fi
 
     if [ "$with_pulseaudio" ]; then
-        pa_sock=$(get_pa_socket)
-        validate_pa_socket "$pa_sock"
-        in_pa_sock="$(get_in_pa_socket)"
-        A="$A$S--setenv=PULSE_SERVER=$in_pa_sock"
-        A="$A$S--bind=$pa_sock:$in_pa_sock"
-        copy_pa_cookie
+        A="$A$S$(make_pa_args)"
     fi
 
     if [ "${spawn_boot-}" ]; then
@@ -522,39 +568,29 @@ EOF
 
 spawn_root_docker() {
     local IFS="$(printf '\n\t')"
-    local args= pa_sock= in_pa_sock=
+    local A= pa_sock= in_pa_sock=
 
-    args="--user=$container_user"
+    A="--user=$container_user"
 
     if [ "$bind_home" ]; then
-        args="${args}${S}--volume=$bind_home:$container_home"
+        A="${A}${S}--volume=$bind_home:$container_home"
     fi
 
     if [ "$with_ssh_agent" ]; then
-        args="${args}${S}--env=SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-        args="${args}${S}--volume=$SSH_AUTH_SOCK:$SSH_AUTH_SOCK"
+        A="$A$S$(make_ssh_args)"
     fi
 
     if [ "$with_x11" ]; then
-        args="${args}${S}--env=DISPLAY=$DISPLAY"
-        args="${args}${S}--env=XAUTHORITY=$xauth_file"
-        # disable Qt's usage of shared memory which we do not expose
-        args="${args}${S}--env=QT_X11_NO_MITSHM=1"
-        args="${args}${S}--volume=$xauth_file:$xauth_file"
-        args="${args}${S}--volume=$xsock_dir:$xsock_dir"
+        A="$A$S$(make_x11_args)"
     fi
 
     if [ "$with_pulseaudio" ]; then
-        pa_sock=$(get_pa_socket)
-        validate_pa_socket "$pa_sock"
-        in_pa_sock=$(get_in_pa_socket)
-        args="$args$S--env=PULSE_SERVER=$in_pa_sock"
-        args="$args$S--volume=$pa_sock:$in_pa_sock"
+        A="$A$S$(make_pa_args)"
     fi
 
     docker run --rm -it \
         ${share_system:+--privileged} \
-        $args $additional_args $container_name \
+        $A $additional_args $container_name \
         $container_command
 }
 
