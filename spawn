@@ -281,7 +281,7 @@ in_mount() {
 make_env_arg() {
     local value="$1"
     case $container_type in
-        chroot) ;;
+        chroot) echo "$value" ;;
         nspawn) echo "--setenv=$value" ;;
         docker) echo "--env=$value" ;;
     esac
@@ -321,18 +321,26 @@ make_x11_args() {
 }
 
 make_pa_args() {
-    local A= pa_sock= in_pa_sock=
+    local A= local pa_sock= in_pa_sock= cookie_file= in_cookie_file=
 
     pa_sock=$(get_pa_socket)
     validate_pa_socket "$pa_sock"
     in_pa_sock="$(get_in_pa_socket)"
 
+    cookie_file="$(get_pa_cookie)"
+    in_cookie_file="$(get_config_dir pulse)/cookie"
+
     A="$A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
     A="$A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
-
-    # copy_pa_cookie
+    A="$A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
 
     echo "$A"
+}
+
+adjust_pa_cookie_mode() {
+    local cookie_file="$(get_pa_cookie)"
+
+    chmod 666 "$cookie_file" || die
 }
 
 get_config_dir() {
@@ -362,6 +370,10 @@ get_in_pa_socket() {
 
 validate_pa_socket() {
     [ -S "$1" ] || die "PulseAudio socket '$1' does not exist"
+}
+
+get_pa_cookie() {
+    echo "$HOME/.config/pulse/cookie"
 }
 
 copy_pa_cookie() {
@@ -438,6 +450,7 @@ spawn_root_nspawn() {
 
     if [ "$with_pulseaudio" ]; then
         A="$A$S$(make_pa_args)"
+        adjust_pa_cookie_mode
     fi
 
     if [ "${spawn_boot-}" ]; then
@@ -570,6 +583,7 @@ spawn_root_docker() {
 
     if [ "$with_pulseaudio" ]; then
         A="$A$S$(make_pa_args)"
+        adjust_pa_cookie_mode
     fi
 
     docker run --rm -it \
