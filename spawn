@@ -255,11 +255,26 @@ find_user_info() {
     fi
 }
 
-get_userspec() {
-    local uid= gid=
-    uid=$(find_user_info uid)
-    gid=$(find_user_info gid)
-    echo "$uid:$gid"
+get_config_dir() {
+    local home_dir="$(find_user_info home)"
+    local config_dir="$home_dir/.config"
+
+    echo "$config_dir${1:+/$1}"
+}
+
+get_runtime_dir() {
+    local uid="$(find_user_info uid)"
+    local runtime_dir="/run/user/${uid:?}"
+
+    echo "$runtime_dir${1:+/$1}"
+}
+
+get_pa_socket() {
+    if [ "$(command -v pactl)" ]; then
+        pactl info 2>/dev/null | \
+            awk '/Server String: / { print $3 }' | \
+            sed 's/^unix://'
+    fi
 }
 
 in_mkdir() {
@@ -290,99 +305,88 @@ make_env_arg() {
 make_bind_arg() {
     local value="$1"
     case $container_type in
-        chroot) ;;
         nspawn) echo "--bind=$value" ;;
         docker) echo "--volume=$value" ;;
     esac
 }
 
-make_ssh_args() {
-    local A=
+setup_ssh_env() {
+    local SSH_A=
 
-    A="$A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
-    A="$A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
+    [ "${with_ssh_agent-}" ] || return 0
 
-    echo "$A"
+    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
+
+    if [ "$container_type" = "chroot" ]; then
+        in_touch "$root_dir/$SSH_AUTH_SOCK"
+        in_mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK"
+    else
+        SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
+    fi
+
+    eval "${1}=\"\$${1}$S$SSH_A\""
 }
 
-make_x11_args() {
-    local A=
+setup_x11_env() {
+    local X11_A=
 
-    A="$A$S$(make_env_arg "DISPLAY=$DISPLAY")"
-    A="$A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
+    [ "${with_x11-}" ] || return 0
+
+    X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
+    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
 
     # disable Qt's usage of shared memory which we do not expose
-    A="$A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
+    X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
 
-    A="$A$S$(make_bind_arg "$xauth_file:$xauth_file")"
-    A="$A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
+    if [ "$container_type" = "chroot" ]; then
+        in_touch "$root_dir/$xauth_file"
+        in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
+        in_mkdir "$root_dir/$xsock_dir"
+        in_mount --bind "$xsock_dir" "$root_dir/$xsock_dir"
+    else
+        X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$xauth_file")"
+        X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
+    fi
 
-    echo "$A"
+    eval "${1}=\"\$${1}$S$X11_A\""
 }
 
-make_pa_args() {
-    local A= local pa_sock= in_pa_sock= cookie_file= in_cookie_file=
+setup_pa_env() {
+    local PA_A=
+    local pa_sock= in_pa_sock=
+    local cookie_file= in_cookie_file=
+
+    [ "${with_pulseaudio-}" ] || return 0
 
     pa_sock=$(get_pa_socket)
-    validate_pa_socket "$pa_sock"
-    in_pa_sock="$(get_in_pa_socket)"
+    in_pa_sock="$(get_runtime_dir pulse)/native"
 
-    cookie_file="$(get_pa_cookie)"
+    [ -S "$pa_sock" ] || die "PulseAudio socket '$pa_sock' does not exist"
+
+    cookie_file="$HOME/.config/pulse/cookie"
     in_cookie_file="$(get_config_dir pulse)/cookie"
 
-    A="$A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
-    A="$A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
-    A="$A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
+    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
 
-    echo "$A"
-}
-
-adjust_pa_cookie_mode() {
-    local cookie_file="$(get_pa_cookie)"
+    if [ "$container_type" = "chroot" ]; then
+        in_touch "$root_dir/$in_pa_sock"
+        in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
+        in_touch "$root_dir/$in_cookie_file"
+        in_mount --bind "$cookie_file" "$root_dir/$in_cookie_file"
+    else
+        PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
+        PA_A="$PA_A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
+    fi
 
     chmod 666 "$cookie_file" || die
+
+    eval "${1}=\"\$${1}$S$PA_A\""
 }
 
-get_config_dir() {
-    local config_dir="/home/$container_user/.config"
-
-    echo "$config_dir${1:+/$1}"
-}
-
-get_runtime_dir() {
-    local uid="$(find_user_info uid)"
-    local runtime_dir="/run/user/${uid:?}"
-
-    echo "$runtime_dir${1:+/$1}"
-}
-
-get_pa_socket() {
-    if [ "$(command -v pactl)" ]; then
-        pactl info 2>/dev/null | \
-            awk '/Server String: / { print $3 }' | \
-            sed 's/^unix://'
-    fi
-}
-
-get_in_pa_socket() {
-    echo "$(get_runtime_dir pulse)/native"
-}
-
-validate_pa_socket() {
-    [ -S "$1" ] || die "PulseAudio socket '$1' does not exist"
-}
-
-get_pa_cookie() {
-    echo "$HOME/.config/pulse/cookie"
-}
-
-copy_pa_cookie() {
-    local cookie_file="$HOME/.config/pulse/cookie"
-    local dest_dir="$root_dir/$(get_config_dir pulse)"
-    [ -f "$cookie_file" ] || die "PulseAudio cookie file '$cookie_file' was not found"
-    in_mkdir "$dest_dir"
-    su_run cp -f "$cookie_file" "$dest_dir/cookie" || die
-    su_run chown "$(get_userspec)" "$dest_dir/cookie" || die
+setup_env() {
+    setup_ssh_env "$1"
+    setup_x11_env "$1"
+    setup_pa_env  "$1"
 }
 
 extract_xauth() {
@@ -419,7 +423,7 @@ cleanup() {
 
 spawn_root_nspawn() {
     local IFS="$S"
-    local A= pa_sock= in_pa_sock= cmd=
+    local A= cmd=
 
     # systemd-nspawn runs 'getent passwd <user>' inside the container to get
     # passwd entry for the user or fails with "Failed to resolve user <user>"
@@ -440,18 +444,7 @@ spawn_root_nspawn() {
         A="$A$S--bind=$bind_home:$container_home"
     fi
 
-    if [ "$with_ssh_agent" ]; then
-        A="$A$S$(make_ssh_args)"
-    fi
-
-    if [ "$with_x11" ]; then
-        A="$A$S$(make_x11_args)"
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        A="$A$S$(make_pa_args)"
-        adjust_pa_cookie_mode
-    fi
+    setup_env A
 
     if [ "${spawn_boot-}" ]; then
         A="$A$S--boot"
@@ -524,31 +517,7 @@ EOF
     env="${env}${S}LOGNAME=$container_user"
     env="${env}${S}PATH=$path"
 
-    if [ "$with_ssh_agent" ]; then
-        env="${env}${S}SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-        ssh_sock_dir=$(dirname "$SSH_AUTH_SOCK")
-        su_run mkdir -p "$root_dir/$ssh_sock_dir" || die
-        su_run mount --bind "$ssh_sock_dir" "$root_dir/$ssh_sock_dir" || die
-    fi
-
-    if [ "$with_x11" ]; then
-        env="${env}${S}DISPLAY=$DISPLAY"
-        env="${env}${S}XAUTHORITY=$xauth_file"
-        su_run mkdir -p "$root_dir/$xsock_dir" || die
-        su_run mkdir -p "$root_dir/$(dirname $xauth_file)" || die
-        su_run mount --bind "$xsock_dir" "$root_dir/$xsock_dir" || die
-        su_run cp -a --parents "$xauth_file" "$root_dir" || die
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        pa_sock=$(get_pa_socket)
-        validate_pa_socket "$pa_sock"
-        in_pa_sock="$(get_in_pa_socket)"
-        env="${env}${S}PULSE_SERVER=$in_pa_sock"
-        in_touch "$root_dir/$in_pa_sock"
-        su_run mount --bind "$pa_sock" "$root_dir/$in_pa_sock" || die
-        copy_pa_cookie
-    fi
+    setup_env env
 
     if [ "${container_command-}" ]; then
         cmd=$(escape_quote $container_command)
@@ -573,18 +542,7 @@ spawn_root_docker() {
         A="${A}${S}--volume=$bind_home:$container_home"
     fi
 
-    if [ "$with_ssh_agent" ]; then
-        A="$A$S$(make_ssh_args)"
-    fi
-
-    if [ "$with_x11" ]; then
-        A="$A$S$(make_x11_args)"
-    fi
-
-    if [ "$with_pulseaudio" ]; then
-        A="$A$S$(make_pa_args)"
-        adjust_pa_cookie_mode
-    fi
+    setup_env A
 
     docker run --rm -it \
         ${share_system:+--privileged} \
