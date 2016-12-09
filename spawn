@@ -13,7 +13,7 @@ container_user="dev"
 container_group="users"
 container_home=
 container_command=
-additional_args=
+passthrough_args=
 
 root_arch=
 with_ssh_agent=
@@ -90,8 +90,6 @@ parse_command_line() {
                     cleanup_only=1 ;;
                 --share-system)
                     share_system=1 ;;
-                --boot)
-                    spawn_boot=1 ;;
                 --using-docker)
                     container_type='docker' ;;
                 --using-nspawn)
@@ -99,7 +97,7 @@ parse_command_line() {
                 --using-chroot)
                     container_type='chroot' ;;
                 -*)
-                    additional_args="${additional_args}${S}$1" ;;
+                    passthrough_args="${passthrough_args}${S}$1" ;;
                 *)
                     if [ -d "$1" ]; then
                         container_type="${container_type:-chroot}"
@@ -314,12 +312,29 @@ in_mount() {
     su_run mount "$@" || die
 }
 
-make_user_arg() {
+add_user_arg() {
+    local _A=
+
     if [ "$container_type" = "chroot" ]; then
-        echo "--userspec=$container_user:users"
+        _A="--userspec=$container_user:users"
     else
-        echo "--user=$container_user"
+        _A="--user=$container_user"
     fi
+
+    eval "${1}=\"\$${1}$S$_A\""
+}
+
+add_privileged_arg() {
+    local _A=
+
+    case $container_type in
+        nspawn)
+            _A="--share-system" ;;
+        docker)
+            _A="--privileged" ;;
+    esac
+
+    eval "${1}=\"\$${1}$S$_A\""
 }
 
 make_env_arg() {
@@ -527,7 +542,9 @@ EOF
 
     setup_env env
 
-    chroot_cmd="\"$chroot\" $(make_user_arg) \"$root_dir\""
+    chroot_cmd="\"$chroot\""
+    add_user_arg chroot_cmd
+    chroot_cmd="$chroot_cmd \"$root_dir\""
 
     mount_cmd="$mount_cmd $chroot_cmd $(get_command)"
 
@@ -537,39 +554,28 @@ EOF
 spawn_root_nspawn() {
     local IFS="$S" A=
 
-    # systemd-nspawn runs 'getent passwd <user>' inside the container to get
-    # passwd entry for the user or fails with "Failed to resolve user <user>"
-    if [ "$container_user" ]; then
-        A="$A$S--user=$container_user"
-    fi
-
     if ! passwd_exists || ! user_exists "$container_user"; then
         die "the specified user '$container_user' is not found inside the chroot"
     fi
 
-    if [ "$share_system" ]; then
-        A="$A$S--share-system"
-    fi
-
+    # systemd-nspawn runs 'getent passwd <user>' inside the container to get
+    # passwd entry for the user or fails with "Failed to resolve user <user>"
+    add_user_arg A
+    add_privileged_arg A
     setup_env A
 
-    if [ "${spawn_boot-}" ]; then
-        A="$A$S--boot"
-    fi
-
-    su_run systemd-nspawn $A $additional_args -D "$root_dir" $(get_command)
+    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" \
+        $(get_command)
 }
 
 spawn_root_docker() {
     local IFS="$S" A=
 
-    A="--user=$container_user"
-
+    add_user_arg A
+    add_privileged_arg A
     setup_env A
 
-    docker run --rm -it \
-        ${share_system:+--privileged} \
-        $A $additional_args $container_name \
+    docker run --rm -it $A $passthrough_args $container_name \
         $(get_command)
 }
 
