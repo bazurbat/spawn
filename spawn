@@ -117,20 +117,29 @@ parse_command_line() {
 }
 
 validate_environment() {
-    [ "$container_type" ] ||
-        die "unable to determine container type from the arguments"
+    if [ -z "$container_type" ]; then
+        die "unable to determine container type from the arguments, probably \
+no name or directory was given or the specified directory does not exist"
+    fi
+
     case $container_type in
-        docker)
-            [ "$container_name" ] ||
-                die "container name was not specified"
-            ;;
-        nspawn)
-            ;;
-        chroot)
+        chroot|nspawn)
             [ "$root_dir" ] ||
-                die "root directory was not specified"
+                die "root directory is not specified"
             [ -d "$root_dir" ] ||
                 die "root directory '$root_dir' is not exists"
+            ;;
+        docker)
+            [ "$container_name" ] ||
+                die "container name is not specified"
+    esac
+
+    case $container_type in
+        nspawn)
+            [ "$(command -v systemd-nspawn)" ] ||
+                die "systemd-nspawn command was not found"
+            ;;
+        chroot)
             [ "$(command -v dirname)" ] ||
                 die "dirname command was not found"
             [ "$(command -v realpath)" ] ||
@@ -141,36 +150,8 @@ validate_environment() {
                 die "tac command was not found"
             [ "$(command -v unshare)" ] ||
                 die "unshare command was not found"
-
-            chroot=$(command -v chroot)
-            [ "$chroot" ] ||
-                chroot="/usr/sbin/chroot"
-            [ -x "$chroot" ] ||
-                die "chroot command was not found"
-            ;;
-        *)
-            die "unsupported container type: $container_type"
             ;;
     esac
-
-    if [ "$bind_home" ]; then
-        [ -d "$bind_home" ] ||
-            die "The directory '$bind_home' is not exists"
-    fi
-
-    if [ "$with_ssh_agent" ]; then
-        [ "$SSH_AUTH_SOCK" ] ||
-            die "SSH_AUTH_SOCK is not set"
-        [ -e "$SSH_AUTH_SOCK" ] ||
-            die "$SSH_AUTH_SOCK is not exists"
-    fi
-
-    if [ "$with_x11" ]; then
-        [ "$DISPLAY" ] ||
-            die "passing of X11 environment is enabled but DISPLAY is not set"
-        [ -d "$xsock_dir" ] ||
-            die "X11 socket directory '$xsock_dir' is not exists"
-    fi
 }
 
 die() {
@@ -359,6 +340,11 @@ setup_ssh_env() {
 
     [ "${with_ssh_agent-}" ] || return 0
 
+    [ "$SSH_AUTH_SOCK" ] ||
+        die "SSH_AUTH_SOCK is not set"
+    [ -e "$SSH_AUTH_SOCK" ] ||
+        die "$SSH_AUTH_SOCK is not exists"
+
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
 
     if [ "$root_dir" ]; then
@@ -378,6 +364,11 @@ setup_x11_env() {
     local X11_A=
 
     [ "${with_x11-}" ] || return 0
+
+    [ "$DISPLAY" ] ||
+        die "passing of X11 environment is enabled but DISPLAY is not set"
+    [ -d "$xsock_dir" ] ||
+        die "X11 socket directory '$xsock_dir' is not exists"
 
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
     X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
@@ -440,6 +431,9 @@ setup_home_env() {
     local HOME_A=
 
     [ "$bind_home" ] || return 0
+
+    [ -d "$bind_home" ] ||
+        die "The directory '$bind_home' is not exists"
 
     if [ "$root_dir" ]; then
         in_mkdir "$root_dir/$container_home"
@@ -542,7 +536,7 @@ EOF
 
     setup_env env
 
-    chroot_cmd="\"$chroot\""
+    chroot_cmd="chroot"
     add_user_arg chroot_cmd
     chroot_cmd="$chroot_cmd \"$root_dir\""
 
