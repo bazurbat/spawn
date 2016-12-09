@@ -128,6 +128,10 @@ no name or directory was given or the specified directory does not exist"
                 die "root directory is not specified"
             [ -d "$root_dir" ] ||
                 die "root directory '$root_dir' is not exists"
+            [ -f "$root_dir/etc/passwd" ] ||
+                die "/etc/passwd is not exists in '$root_dir'"
+            user_exists "$container_user" ||
+                die "the specified user '$container_user' is not found in '$root_dir'"
             ;;
         docker)
             [ "$container_name" ] ||
@@ -182,10 +186,6 @@ print_args() {
     printf "%d: " $#
     printf "<%s> " "$@"
     printf "\n"
-}
-
-passwd_exists() {
-    test -f "$root_dir/etc/passwd"
 }
 
 user_exists() {
@@ -481,10 +481,6 @@ spawn_root_chroot() {
     local IFS="$S"
     local setarch= env= local cmd= mount_cmd= chroot_cmd=
 
-    if ! passwd_exists || ! user_exists "$container_user"; then
-        die "the specified user '$container_user' is not found inside the chroot"
-    fi
-
     case $root_arch in
         x86|i?86)
             setarch="linux32" ;;
@@ -537,10 +533,6 @@ EOF
 
 spawn_root_nspawn() {
     local IFS="$S" A=
-
-    if ! passwd_exists || ! user_exists "$container_user"; then
-        die "the specified user '$container_user' is not found inside the chroot"
-    fi
 
     # systemd-nspawn runs 'getent passwd <user>' inside the container to get
     # passwd entry for the user or fails with "Failed to resolve user <user>"
