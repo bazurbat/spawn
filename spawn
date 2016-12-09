@@ -308,6 +308,15 @@ add_privileged_arg() {
     eval "${1}=\"\$${1}$S$_A\""
 }
 
+make_setarch() {
+    case $root_arch in
+        x86|i?86)
+            echo "linux32" ;;
+        x86-64|x86_64|amd64)
+            echo "linux64" ;;
+    esac
+}
+
 make_env_arg() {
     local value="$1"
     case $container_type in
@@ -479,14 +488,7 @@ cleanup() {
 
 spawn_root_chroot() {
     local IFS="$S"
-    local setarch= env= local cmd= mount_cmd= chroot_cmd=
-
-    case $root_arch in
-        x86|i?86)
-            setarch="linux32" ;;
-        x86-64|x86_64|amd64)
-            setarch="linux64" ;;
-    esac
+    local env= local cmd= mount_cmd= chroot_cmd=
 
     mount_cmd="mount -t proc proc \"$root_dir/proc\" &&"
 
@@ -528,7 +530,7 @@ EOF
 
     mount_cmd="$mount_cmd $chroot_cmd $(get_command)"
 
-    su_run $setarch env - $env unshare -m /bin/sh -c "$mount_cmd"
+    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$mount_cmd"
 }
 
 spawn_root_nspawn() {
