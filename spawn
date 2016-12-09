@@ -277,6 +277,27 @@ get_pa_socket() {
     fi
 }
 
+get_command() {
+    case $container_type in
+        chroot)
+            if [ "$container_command" ]; then
+                echo "$(escape_quote $container_command)"
+            else
+                echo "/bin/sh${S}-c${S}'cd && exec /bin/bash -l'"
+            fi ;;
+        nspawn)
+            if [ "$container_command" ]; then
+                echo "$container_command"
+            else
+                echo "/bin/sh${S}-c${S}cd && exec /bin/bash -l"
+            fi ;;
+        docker)
+            if [ "$container_command" ]; then
+                echo "$container_command"
+            fi ;;
+    esac
+}
+
 in_mkdir() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
     su_run install -o $uid -g $gid -d "$1" || die
@@ -291,6 +312,14 @@ in_touch() {
 
 in_mount() {
     su_run mount "$@" || die
+}
+
+make_user_arg() {
+    if [ "$container_type" = "chroot" ]; then
+        echo "--userspec=$container_user:users"
+    else
+        echo "--user=$container_user"
+    fi
 }
 
 make_env_arg() {
@@ -417,14 +446,6 @@ setup_env() {
     setup_home_env "$1"
 }
 
-make_user_arg() {
-    if [ "$container_type" = "chroot" ]; then
-        echo "--userspec=$container_user"
-    else
-        echo "--user=$container_user"
-    fi
-}
-
 extract_xauth() {
     xauth_file=$(mktemp)
     # Use wildcard authentication family because hostname of container can
@@ -459,8 +480,7 @@ cleanup() {
 
 spawn_root_chroot() {
     local IFS="$S"
-    local path= setarch= env= ssh_sock_dir=
-    local cmd= mount_cmd= chroot_cmd= i=
+    local setarch= env= local cmd= mount_cmd= chroot_cmd=
 
     if ! passwd_exists || ! user_exists "$container_user"; then
         die "the specified user '$container_user' is not found inside the chroot"
@@ -507,22 +527,15 @@ EOF
 
     setup_env env
 
-    if [ "${container_command-}" ]; then
-        cmd=$(escape_quote $container_command)
-    else
-        cmd="/bin/sh${S}-c${S}'cd && exec /bin/bash -l'"
-    fi
-
     chroot_cmd="\"$chroot\" $(make_user_arg) \"$root_dir\""
 
-    mount_cmd="$mount_cmd $chroot_cmd $cmd"
+    mount_cmd="$mount_cmd $chroot_cmd $(get_command)"
 
     su_run $setarch env - $env unshare -m /bin/sh -c "$mount_cmd"
 }
 
 spawn_root_nspawn() {
-    local IFS="$S"
-    local A= cmd=
+    local IFS="$S" A=
 
     # systemd-nspawn runs 'getent passwd <user>' inside the container to get
     # passwd entry for the user or fails with "Failed to resolve user <user>"
@@ -544,18 +557,11 @@ spawn_root_nspawn() {
         A="$A$S--boot"
     fi
 
-    if [ "${container_command-}" ]; then
-        cmd="$container_command"
-    else
-        cmd="/bin/sh${S}-c${S}cd && exec /bin/bash -l"
-    fi
-
-    su_run systemd-nspawn $A $additional_args -D "$root_dir" $cmd
+    su_run systemd-nspawn $A $additional_args -D "$root_dir" $(get_command)
 }
 
 spawn_root_docker() {
-    local IFS="$(printf '\n\t')"
-    local A=
+    local IFS="$S" A=
 
     A="--user=$container_user"
 
@@ -564,7 +570,7 @@ spawn_root_docker() {
     docker run --rm -it \
         ${share_system:+--privileged} \
         $A $additional_args $container_name \
-        $container_command
+        $(get_command)
 }
 
 if [ $# = 0 ]; then
