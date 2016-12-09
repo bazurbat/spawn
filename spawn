@@ -169,8 +169,6 @@ su_run() {
     fi
 }
 
-try_source() { [ -f "$1" ] && . "$1" || :; }
-
 escape_quote() {
     local arg= result=
     for arg in "$@"; do
@@ -184,14 +182,6 @@ print_args() {
     printf "%d: " $#
     printf "<%s> " "$@"
     printf "\n"
-}
-
-load_config() {
-    if [ "${XDG_CONFIG_HOME-}" ]; then
-        try_source "$XDG_CONFIG_HOME/$program_name/env"
-    else
-        try_source "$HOME/.config/$program_name/env"
-    fi
 }
 
 passwd_exists() {
@@ -577,8 +567,6 @@ if [ $# = 0 ]; then
     show_usage
     exit
 fi
-
-load_config
 
 parse_command_line "$@"
 validate_environment
