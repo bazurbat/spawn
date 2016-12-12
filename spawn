@@ -22,6 +22,7 @@ with_x11=
 cleanup_only=
 share_system=
 bind_home=
+chroot=
 
 xauth_file=
 xsock_dir='/tmp/.X11-unix'
@@ -154,6 +155,15 @@ no name or directory was given or the specified directory does not exist"
                 die "tac command was not found"
             [ "$(command -v unshare)" ] ||
                 die "unshare command was not found"
+
+            chroot=$(command -v chroot)
+            if [ -z "$chroot" ]; then
+                chroot="/usr/sbin/chroot"
+            fi
+            if ! [ -x "$chroot" ]; then
+                die "chroot command was not found"
+            fi
+
             ;;
     esac
 }
@@ -524,7 +534,7 @@ EOF
 
     setup_env env
 
-    chroot_cmd="chroot"
+    chroot_cmd="$chroot"
     add_user_arg chroot_cmd
     chroot_cmd="$chroot_cmd \"$root_dir\""
 
