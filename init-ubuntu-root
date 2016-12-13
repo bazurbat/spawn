@@ -1,0 +1,445 @@
+#!/bin/sh
+
+# deboostrap tweaks are taken from Docker repository:
+# https://github.com/docker/docker/blob/master/contrib/mkimage/debootstrap
+
+set -eu
+
+program_name="init-ubuntu-root"
+suffix="_added_by_${program_name}"
+
+show_usage() {
+    cat <<EOF
+Usage: $program_name [OPTION...] <root-dir>
+
+  Initializes unpacked Ubuntu rootfs for chroot or spawn.
+
+OPTIONS
+
+  -h|--help                Show help
+  --default                Run default setup
+  --add-i386               Add i386 arch
+  --install-java6          Install Oracle JDK 6
+  --install-java8-openjdk  Install Open JDK 8
+  --install-wine           Install Wine
+  --install-perforce       Install Perforce
+  --install-dev-tools      Install development tools
+  --skip-update            Do not run 'apt-get update' before install
+  --add-user               Add dev user
+
+  The <root-dir> argument is mandatory and should point to unpacked Ubuntu root
+  directory. Default tweaks are taken from Docker debootstrap setup. The
+  selection of development tools is from a personal list collected over time.
+
+IMAGES
+
+  Images can be downloaded from:
+
+    https://partner-images.canonical.com/core/trusty/current/ubuntu-trusty-core-cloudimg-amd64-root.tar.gz
+    https://partner-images.canonical.com/core/xenial/current/ubuntu-xenial-core-cloudimg-amd64-root.tar.gz
+
+  Unpack with:
+
+    mkdir <root-dir>
+    sudo tar -C <root-dir> -xpf <filename>
+
+EOF
+}
+
+die() {
+    echo Error: $*
+    exit 1
+}
+
+in_chroot() {
+    PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+    LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
+    chroot "$root_dir" "$@"
+}
+
+get_codename() {
+    if [ -r "$root_dir/etc/lsb-release" ]; then
+        echo $(. "$root_dir/etc/lsb-release" && echo $DISTRIB_CODENAME)
+    fi
+}
+
+debootstrap_setup() {
+
+# prevent init scripts from running during install/update
+cat > "$root_dir/usr/sbin/policy-rc.d" <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+chmod +x "$root_dir/usr/sbin/policy-rc.d"
+
+# prevent upstart scripts from running during install/update
+in_chroot dpkg-divert --local --rename --add /sbin/initctl
+cat > "$root_dir/sbin/initctl" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$root_dir/sbin/initctl"
+
+# this file is one APT creates to make sure we don't "autoremove" our currently
+# in-use kernel, which doesn't really apply to debootstraps/Docker images that
+# don't even have kernels installed
+rm -f "$root_dir/etc/apt/apt.conf.d/01autoremove-kernels"
+
+# force dpkg not to call sync() after package extraction (speeding up installs)
+cat > "$root_dir/etc/dpkg/dpkg.cfg.d/apt-speedup${suffix}" <<'EOF'
+force-unsafe-io
+EOF
+
+# remove apt-cache translations for fast "apt-get update"
+cat > "$root_dir/etc/apt/apt.conf.d/no-languages${suffix}" <<'EOF'
+Acquire::Languages "none";
+EOF
+
+# cat > "$root_dir/etc/apt/apt.conf.d/docker-gzip-indexes" <<'EOF'
+# Acquire::GzipIndexes "true";
+# Acquire::CompressionTypes::Order:: "gz";
+# EOF
+
+# update "autoremove" configuration to be aggressive about removing suggests
+# deps that weren't manually installed, see
+# https://aptitude.alioth.debian.org/doc/en/ch02s05s05.html#configApt-AutoRemove-SuggestsImportant
+cat > "$root_dir/etc/apt/apt.conf.d/autoremove-suggests${suffix}" <<'EOF'
+Apt::AutoRemove::SuggestsImportant "false";
+EOF
+
+# enable Universe repositories which is disabled in Ubuntu Core by default
+sed -ri 's/# (deb .*universe)/\1/' "$root_dir/etc/apt/sources.list"
+
+}
+
+inject_resolv_conf() {
+    cp -L "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
+}
+
+setup_locale() {
+    cat > "$root_dir/etc/profile.d/locale${suffix}.sh" <<'EOF'
+export LANG=C.UTF-8
+EOF
+}
+
+setup_proxy() {
+    local profile_config="$root_dir/etc/profile.d/proxy${suffix}.sh"
+    local apt_config="$root_dir/etc/apt/apt.conf.d/proxy${suffix}"
+
+    # NOTE: setting proxy for apt is needed to get it to work during the init
+
+    if [ "${http_proxy-}" -o "${https_proxy-}" ]; then
+        : > "$profile_config"
+
+        if [ "$http_proxy" ]; then
+            echo "export http_proxy=\"$http_proxy\"" >> "$profile_config"
+            echo "Acquire::http::Proxy \"$http_proxy\";" > "$apt_config"
+        fi
+
+        if [ "$https_proxy" ]; then
+            echo "export https_proxy=\"$https_proxy\"" >> "$profile_config"
+            echo "Acquire::http::Proxy \"$https_proxy\";" > "$apt_config"
+        fi
+
+        if [ "${no_proxy-}" ]; then
+            echo "export no_proxy=\"$no_proxy\"" >> "$profile_config"
+        fi
+    fi
+}
+
+# oracle java installer
+add_webupda8team_ppa() {
+    echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu $codename main" \
+        > "$root_dir/etc/apt/sources.list.d/webupd8team-java.list"
+    in_chroot apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EEA14886
+    echo "debconf shared/accepted-oracle-license-v1-1 select true" \
+        | in_chroot debconf-set-selections
+    echo "debconf shared/accepted-oracle-license-v1-1 seen true" \
+        | in_chroot debconf-set-selections
+}
+
+install_java6() {
+    in_chroot apt-get -y --no-install-recommends install oracle-java6-installer
+    in_chroot rm -rf /var/cache/oracle-jdk6-installer
+}
+
+install_java8_openjdk() {
+    in_chroot apt-get -y install openjdk-8-jdk
+}
+
+add_wine_ppa() {
+    echo "deb http://ppa.launchpad.net/ubuntu-wine/ppa/ubuntu $codename main" \
+        > "$root_dir/etc/apt/sources.list.d/ubuntu-wine.list"
+
+    in_chroot apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F9CB8DB0
+}
+
+install_wine()
+{
+    in_chroot apt-get -y --allow-unauthenticated install wine1.8
+}
+
+add_perforce_ppa() {
+    wget -qO - https://package.perforce.com/perforce.pubkey | in_chroot apt-key add -
+    echo "deb http://package.perforce.com/apt/ubuntu $codename release" \
+        > "$root_dir/etc/apt/sources.list.d/perforce.list"
+}
+
+install_perforce()
+{
+    in_chroot apt-get -y --allow-unauthenticated install helix-cli
+}
+
+add_i386_arch() {
+    in_chroot dpkg --add-architecture i386
+}
+
+update_apt() {
+    [ "${skip_update-}" ] && return 0
+    in_chroot apt-get update
+}
+
+upgrade_dist() {
+    in_chroot apt-get dist-upgrade -y
+}
+
+cleanup_apt() {
+    in_chroot apt-get -y autoremove
+    in_chroot apt-get -y clean
+    #rm -rf /var/lib/apt/lists/* /var/tmp/* /tmp/*
+}
+
+install_dev_tools() {
+    in_chroot apt-get -y --no-install-recommends install \
+        mercurial \
+        smbclient
+
+    in_chroot apt-get -y install \
+        autoconf \
+        autopoint \
+        bash-completion \
+        bison \
+        build-essential \
+        ccache \
+        cmake \
+        cpp \
+        cpp-4.8 \
+        cryptsetup-bin \
+        curl \
+        flex \
+        g++ \
+        g++-4.8 \
+        g++-multilib \
+        gawk \
+        gcc \
+        gcc-4.8 \
+        genromfs \
+        gettext \
+        git \
+        gperf \
+        help2man \
+        intltool \
+        libdbus-1-dev \
+        libexpat1-dev \
+        libgcrypt11-dev \
+        libglib2.0-dev \
+        libgpgme11-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libswitch-perl \
+        libtool \
+        libxml2-utils \
+        lua5.1 \
+        ncurses-dev \
+        ninja-build \
+        pkg-config \
+        python \
+        python-dev \
+        realpath \
+        squashfs-tools \
+        sudo \
+        u-boot-tools \
+        xsltproc \
+        yasm \
+        zip
+
+    if [ "${with_i386-}" ]; then
+        apt-get -y install \
+            zlib1g-dev:i386
+    fi
+
+    # for 'dig' command which some third-party scripts like too much
+    in_chroot apt-get -y install \
+        dnsutils
+
+    # for some other scripts
+    in_chroot apt-get -y install \
+        libterm-readkey-perl
+
+    # for OpenEmbedded
+    # texinfo provides 'makeinfo' which some build scripts need
+    in_chroot apt-get -y install \
+        chrpath \
+        cpio \
+        diffstat \
+        libsdl1.2-dev \
+        texinfo \
+        wget
+
+    in_chroot apt-get -y install \
+        python-gobject-2 python-gtk2
+}
+
+install_misc_tools() {
+    in_chroot apt-get -y install \
+        dialog \
+        man
+}
+
+add_user() {
+    local uid=1000
+    local user=dev
+    local group=users
+    local home_dir="$root_dir/home/$user"
+    local sudoers_file="$root_dir/etc/sudoers.d/$user"
+
+    in_chroot useradd -u $uid -g $group -G sudo -Nm $user
+    echo $user:$user | in_chroot chpasswd
+    chmod 0770 "$home_dir"
+
+    mkdir -p "$(dirname "$sudoers_file")"
+    cat > "$sudoers_file" <<EOF
+$user ALL = (ALL) NOPASSWD: ALL
+EOF
+    chmod 0640 "$sudoers_file"
+}
+
+main() {
+    if [ $# = 0 ]; then
+        show_usage
+        exit 0
+    fi
+
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help)
+                show_usage; exit 0 ;;
+            --default)
+                with_debootstrap=1
+                with_resolv=1 
+                with_locale=1
+                with_proxy=1
+                with_update=1
+                with_upgrade=1
+                with_user=1
+                ;;
+            --add-i386)
+                with_i386=1; with_update=1 ;;
+            --install-java6)
+                with_java6=1; with_update=1 ;;
+            --install-java8-openjdk)
+                with_java8_openjdk=1; with_update=1 ;;
+            --install-wine)
+                with_wine=1; with_update=1 ;;
+            --install-perforce)
+                with_perforce=1; with_update=1 ;;
+            --install-dev-tools)
+                with_dev_tools=1; with_update=1 ;;
+            --add-user)
+                with_user=1 ;;
+            --skip-update)
+                skip_update=1 ;;
+            -*)
+                die "invalid argument: $1" ;;
+            *)
+                if [ -z "${root_dir-}" ]; then
+                    root_dir="$1"
+                fi ;;
+        esac
+        shift
+    done
+ 
+    if [ -z "$root_dir" ]; then
+        die "a root directory is not specified"
+    fi
+
+    if ! [ -d "$root_dir" ]; then
+        die "the specified root directory '$root_dir' is not exists"
+    fi
+
+    codename=$(get_codename)
+    [ "$codename" ] || \
+        die "Could not find distribution codename"
+
+    if [ "${with_debootstrap-}" ]; then
+        debootstrap_setup
+    fi
+
+    if [ "${with_resolv-}" ]; then
+        inject_resolv_conf
+    fi
+
+    if [ "${with_locale-}" ]; then
+        setup_locale
+    fi
+
+    if [ "${with_proxy-}" ]; then
+        setup_proxy
+    fi
+
+    if [ "${with_i386-}" ]; then
+        add_i386_arch
+    fi
+
+    if [ "${with_java6-}" ]; then
+        add_webupda8team_ppa
+    fi
+
+    if [ "${with_wine-}" ]; then
+        add_wine_ppa
+    fi
+
+    if [ "${with_perforce-}" ]; then
+        add_perforce_ppa
+    fi
+
+    if [ "${with_update-}" ]; then
+        update_apt
+    fi
+
+    if [ "${with_upgrade-}" ]; then
+        upgrade_dist
+    fi
+
+    if [ "${with_java6-}" ]; then
+        install_java6
+    fi
+
+    if [ "${with_java8_openjdk-}" ]; then
+        install_java8_openjdk
+    fi
+
+    if [ "${with_wine-}" ]; then
+        install_wine
+    fi
+
+    if [ "${with_perforce-}" ]; then
+        install_perforce
+    fi
+
+    if [ "${with_dev_tools-}" ]; then
+        install_dev_tools
+        install_misc_tools
+    fi
+
+    if [ "${with_update-}" ]; then
+        cleanup_apt
+    fi
+
+    if [ "${with_user-}" ]; then
+        add_user
+    fi
+}
+
+main "$@"

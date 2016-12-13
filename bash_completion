@@ -31,6 +31,25 @@ _spawn_complete() {
     esac
 }
 
+_init_ubuntu_root_complete() {
+    local cur prev
+    _get_comp_words_by_ref cur prev
+
+    local opts='--help --default --add-i386
+--install-java6 --install-java8-openjdk
+--install-wine --install-perforce --install-dev-tools
+--skip-update --add-user'
+
+    compopt -o dirnames
+
+    case $cur in
+        -*)
+            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+            return ;;
+    esac
+}
+
 complete -F _spawn_complete spawn
+complete -F _init_ubuntu_root_complete init-ubuntu-root
 
 ### End of Spawn completion definitions ###
