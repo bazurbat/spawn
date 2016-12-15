@@ -555,7 +555,7 @@ spawn_root_nspawn() {
     add_privileged_arg A
     setup_env A
 
-    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" \
+    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- \
         $(get_command)
 }
 
