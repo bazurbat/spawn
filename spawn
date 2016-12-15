@@ -44,6 +44,7 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --cleanup             Execute cleanup procedures only
+  --share-system        Share dev and sys with the host
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
 
@@ -307,6 +308,8 @@ add_user_arg() {
 
 add_privileged_arg() {
     local _A=
+
+    [ "${share_system-}" ] || return 0
 
     case $container_type in
         nspawn)
