@@ -347,6 +347,24 @@ make_bind_arg() {
     esac
 }
 
+setup_filesystems() {
+    [ "$container_type" = "chroot" ] || return 0
+
+    if [ "$share_system" ]; then
+        su_run mkdir -p "$root_dir/sys"            || die
+        su_run mount --rbind /sys "$root_dir/sys"  || die
+        su_run mount --make-rslave "$root_dir/sys" || die
+        su_run mkdir -p "$root_dir/dev"            || die
+        su_run mount --rbind /dev "$root_dir/dev"  || die
+        su_run mount --make-rslave "$root_dir/dev" || die
+    else
+        if [ -h "$root_dir/dev/shm" ]; then
+            su_run rm "$root_dir/dev/shm" || die
+        fi
+        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts" || die
+    fi
+}
+
 setup_runtime_env() {
     local _A= config_dir= runtime_dir=
 
@@ -495,6 +513,7 @@ setup_home_env() {
 }
 
 setup_env() {
+    setup_filesystems "$1"
     setup_runtime_env "$1"
     setup_ssh_env     "$1"
     setup_x11_env     "$1"
@@ -547,19 +566,7 @@ spawn_root_chroot() {
 
     mount_cmd="mount -t proc proc \"$root_dir/proc\" &&"
 
-    if [ "$share_system" ]; then
-        su_run mkdir -p "$root_dir/sys"            || die
-        su_run mount --rbind /sys "$root_dir/sys"  || die
-        su_run mount --make-rslave "$root_dir/sys" || die
-        su_run mkdir -p "$root_dir/dev"            || die
-        su_run mount --rbind /dev "$root_dir/dev"  || die
-        su_run mount --make-rslave "$root_dir/dev" || die
-    else
-        if [ -h "$root_dir/dev/shm" ]; then
-            su_run rm "$root_dir/dev/shm"
-        fi
-        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
-
+    if ! [ "$share_system" ]; then
         mount_cmd="$mount_cmd $(cat <<EOF
 mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" && \
 mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts" &&
