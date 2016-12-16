@@ -31,6 +31,22 @@ OPTIONS
   directory. Default tweaks are taken from Docker debootstrap setup. The
   selection of development tools is from a personal list collected over time.
 
+  This script creates and modifies files in the system areas inside the
+  <root-dir>, and the running user should have the appropriate privileges to do
+  so. This usually means that it should be run as root (sudo and such).
+
+  The default setup means:
+
+    * Run deboostrap steps with minor adjustments
+    * Copy /etc/resolv.conf to the <root-dir>
+    * Add LANG=C.UTF-8 config to profile.d
+    * Optionally add proxy config to profile.d and apt.conf.d
+    * Run 'apt-get update' then 'apt-get dist-upgrade'
+    * Add dev user
+
+  NOTE: proxy configuration is added only if http_proxy or https_proxy
+  variables are set in the current environment.
+
 IMAGES
 
   Images can be downloaded from:
