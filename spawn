@@ -353,6 +353,19 @@ setup_runtime_env() {
     config_dir=$(get_config_dir)
     runtime_dir=$(get_runtime_dir)
 
+    if [ "$container_type" = "chroot" ]; then
+        _A="$_A$S$(make_env_arg TERM=$TERM)"
+        _A="$_A$S$(make_env_arg HOME=$container_home)"
+        _A="$_A$S$(make_env_arg USER=$container_user)"
+        _A="$_A$S$(make_env_arg LOGNAME=$container_user)"
+
+        if [ "$container_user" = "root" ]; then
+            _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
+        else
+            _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
+        fi
+    fi
+
     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
     _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
 
@@ -552,16 +565,6 @@ mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" && \
 mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts" &&
 EOF
 )"
-    fi
-
-    env="${env}${S}TERM=$TERM"
-    env="${env}${S}HOME=$container_home"
-    env="${env}${S}USER=$container_user"
-    env="${env}${S}LOGNAME=$container_user"
-    if [ "$container_user" = "root" ]; then
-        env="${env}${S}PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    else
-        env="${env}${S}PATH=/usr/local/bin:/usr/bin:/bin"
     fi
 
     setup_env env
