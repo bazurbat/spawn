@@ -513,6 +513,13 @@ cleanup() {
             su_run umount "$mp" || true
         done
     fi
+
+    if [ "$xauth_file" ]; then
+        su_run rm -f "$xauth_file"
+        if [ "$root_dir" ]; then
+            su_run rm -f "$root_dir/$xauth_file"
+        fi
+    fi
 }
 
 spawn_root_chroot() {
