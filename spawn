@@ -370,31 +370,39 @@ setup_filesystems() {
 }
 
 setup_runtime_env() {
-    local _A= config_dir= runtime_dir=
+    local _A= config_dir= runtime_dir= uid= gid=
 
     config_dir=$(get_config_dir)
     runtime_dir=$(get_runtime_dir)
 
-    if [ "$container_type" = "chroot" ]; then
-        _A="$_A$S$(make_env_arg TERM=$TERM)"
-        _A="$_A$S$(make_env_arg HOME=$container_home)"
-        _A="$_A$S$(make_env_arg USER=$container_user)"
-        _A="$_A$S$(make_env_arg LOGNAME=$container_user)"
+    case $container_type in
+        chroot)
+            _A="$_A$S$(make_env_arg TERM=$TERM)"
+            _A="$_A$S$(make_env_arg HOME=$container_home)"
+            _A="$_A$S$(make_env_arg USER=$container_user)"
+            _A="$_A$S$(make_env_arg LOGNAME=$container_user)"
 
-        if [ "$container_user" = "root" ]; then
-            _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
-        else
-            _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
-        fi
+            if [ "$container_user" = "root" ]; then
+                _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
+            else
+                _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
+            fi
 
-        in_mkdir "$root_dir/$runtime_dir" 700
-    fi
+            in_mkdir "$root_dir/$runtime_dir" 700
+            ;;
+        nspawn)
+            uid=$(find_user_info uid)
+            gid=$(find_user_info gid)
+
+            _A="$_A$S--tmpfs=$runtime_dir:uid=$uid,gid=$gid,mode=700"
+            ;;
+    esac
 
     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
     _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
 
     if [ "$root_dir" ]; then
-        in_mkdir "$config_dir"
+        in_mkdir "$root_dir/$config_dir"
     fi
 
     eval "${1}=\"\$${1}$S$_A\""
@@ -412,15 +420,15 @@ setup_ssh_env() {
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
 
-    if [ "$root_dir" ]; then
-        in_touch "$root_dir/$SSH_AUTH_SOCK"
-    fi
-
-    if [ "$container_type" = "chroot" ]; then
-        in_mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK"
-    else
-        SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
-    fi
+    case $container_type in
+        chroot)
+            in_touch "$root_dir/$SSH_AUTH_SOCK"
+            in_mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK"
+            ;;
+        *)
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
+            ;;
+    esac
 
     eval "${1}=\"\$${1}$S$SSH_A\""
 }
@@ -445,18 +453,18 @@ setup_x11_env() {
     # disable Qt's usage of shared memory which we do not expose
     X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
 
-    if [ "$root_dir" ]; then
-        in_touch "$root_dir/$xauth_file"
-        in_mkdir "$root_dir/$xsock_dir"
-    fi
-
-    if [ "$container_type" = "chroot" ]; then
-        in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
-        in_mount --bind "$xsock_dir" "$root_dir/$xsock_dir"
-    else
-        X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$xauth_file")"
-        X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
-    fi
+    case $container_type in
+        chroot)
+            in_touch "$root_dir/$xauth_file"
+            in_mkdir "$root_dir/$xsock_dir"
+            in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
+            in_mount --bind "$xsock_dir" "$root_dir/$xsock_dir"
+            ;;
+        *)
+            X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$xauth_file")"
+            X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
+            ;;
+    esac
 
     eval "${1}=\"\$${1}$S$X11_A\""
 }
@@ -478,18 +486,18 @@ setup_pa_env() {
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
 
-    if [ "$root_dir" ]; then
-        in_touch "$root_dir/$in_pa_sock"
-        in_touch "$root_dir/$in_cookie_file"
-    fi
-
-    if [ "$container_type" = "chroot" ]; then
-        in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
-        in_mount --bind "$cookie_file" "$root_dir/$in_cookie_file"
-    else
-        PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
-        PA_A="$PA_A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
-    fi
+    case $container_type in
+        chroot)
+            in_touch "$root_dir/$in_pa_sock"
+            in_touch "$root_dir/$in_cookie_file"
+            in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
+            in_mount --bind "$cookie_file" "$root_dir/$in_cookie_file"
+            ;;
+        *)
+            PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
+            PA_A="$PA_A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
+            ;;
+    esac
 
     chmod 666 "$cookie_file" || die
 
