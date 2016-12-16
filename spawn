@@ -543,7 +543,7 @@ cleanup() {
 
 spawn_root_chroot() {
     local IFS="$S"
-    local env= local cmd= mount_cmd= chroot_cmd=
+    local env= cmd= mount_cmd= chroot_cmd=
 
     mount_cmd="mount -t proc proc \"$root_dir/proc\" &&"
 
