@@ -561,28 +561,24 @@ cleanup() {
 }
 
 spawn_root_chroot() {
-    local IFS="$S"
-    local env= cmd= mount_cmd= chroot_cmd=
-
-    mount_cmd="mount -t proc proc \"$root_dir/proc\" &&"
-
-    if ! [ "$share_system" ]; then
-        mount_cmd="$mount_cmd $(cat <<EOF
-mount -t tmpfs -o nosuid,nodev,noexec shm "$root_dir/dev/shm" && \
-mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts "$root_dir/dev/pts" &&
-EOF
-)"
-    fi
+    local IFS="$S" env= cmd=
 
     setup_env env
 
-    chroot_cmd="$chroot"
-    add_user_arg chroot_cmd
-    chroot_cmd="$chroot_cmd \"$root_dir\""
+    cmd="mount -t proc proc \"$root_dir/proc\""
 
-    mount_cmd="$mount_cmd $chroot_cmd $(get_command)"
+    if ! [ "$share_system" ]; then
+        cmd="$cmd && mount -t tmpfs -o nosuid,nodev,noexec shm \"$root_dir/dev/shm\""
+        cmd="$cmd && mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts \"$root_dir/dev/pts\""
+    fi
 
-    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$mount_cmd"
+    cmd="$cmd && $chroot"
+
+    add_user_arg cmd
+
+    cmd="$cmd \"$root_dir\" $(get_command)"
+
+    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd"
 }
 
 spawn_root_nspawn() {
