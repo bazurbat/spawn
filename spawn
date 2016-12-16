@@ -280,7 +280,7 @@ get_command() {
 
 in_mkdir() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
-    su_run install -o $uid -g $gid -d "$1" || die
+    su_run install -o "$uid" -g "$gid" ${2:+"-m$2"} -d "$1" || die
 }
 
 in_touch() {
@@ -292,6 +292,18 @@ in_touch() {
 
 in_mount() {
     su_run mount "$@" || die
+}
+
+ensure_runtime_dirs() {
+    local runtime_dir= config_dir=
+
+    [ "$root_dir" ] || return 0
+
+    runtime_dir="$root_dir/$(get_runtime_dir)"
+    config_dir="$root_dir/$(get_config_dir)"
+
+    in_mkdir "$runtime_dir" 700
+    in_mkdir "$config_dir"
 }
 
 add_user_arg() {
@@ -589,11 +601,7 @@ container_home=$(find_user_info home)
 [ "$container_home" ] ||
     die "failed to find user's home directory"
 
-# ensure these directories exist and owned by user
-if [ "$root_dir" ]; then
-    in_mkdir "$root_dir/$(get_runtime_dir)"
-    in_mkdir "$root_dir/$(get_config_dir)"
-fi
+ensure_runtime_dirs
 
 if [ "$with_x11" ]; then
     extract_xauth
