@@ -394,6 +394,10 @@ setup_x11_env() {
     [ -d "$xsock_dir" ] ||
         die "X11 socket directory '$xsock_dir' is not exists"
 
+    extract_xauth
+    [ -f "$xauth_file" ] || die "no X authority file"
+    [ -d "$xsock_dir"  ] || die "no X socket directory"
+
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
     X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
 
@@ -602,12 +606,6 @@ container_home=$(find_user_info home)
     die "failed to find user's home directory"
 
 ensure_runtime_dirs
-
-if [ "$with_x11" ]; then
-    extract_xauth
-    [ -f "$xauth_file" ] || die "no X authority file"
-    [ -d "$xsock_dir"  ] || die "no X socket directory"
-fi
 
 if [ "$container_name" ]; then
     spawn_root_docker
