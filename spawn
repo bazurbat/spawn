@@ -354,8 +354,8 @@ setup_ssh_env() {
 
     [ "$SSH_AUTH_SOCK" ] ||
         die "SSH_AUTH_SOCK is not set"
-    [ -e "$SSH_AUTH_SOCK" ] ||
-        die "$SSH_AUTH_SOCK is not exists"
+    [ -S "$SSH_AUTH_SOCK" ] ||
+        die "$SSH_AUTH_SOCK socket is not exists"
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
 
