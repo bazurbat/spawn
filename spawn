@@ -386,13 +386,14 @@ setup_runtime_env() {
         else
             _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
         fi
+
+        in_mkdir "$root_dir/$runtime_dir" 700
     fi
 
     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
     _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
 
     if [ "$root_dir" ]; then
-        in_mkdir "$root_dir/$runtime_dir" 700
         in_mkdir "$config_dir"
     fi
 
