@@ -294,18 +294,6 @@ in_mount() {
     su_run mount "$@" || die
 }
 
-ensure_runtime_dirs() {
-    local runtime_dir= config_dir=
-
-    [ "$root_dir" ] || return 0
-
-    runtime_dir="$root_dir/$(get_runtime_dir)"
-    config_dir="$root_dir/$(get_config_dir)"
-
-    in_mkdir "$runtime_dir" 700
-    in_mkdir "$config_dir"
-}
-
 add_user_arg() {
     local _A=
 
@@ -357,6 +345,23 @@ make_bind_arg() {
         nspawn) echo "--bind=$value" ;;
         docker) echo "--volume=$value" ;;
     esac
+}
+
+setup_runtime_env() {
+    local _A= config_dir= runtime_dir=
+
+    config_dir=$(get_config_dir)
+    runtime_dir=$(get_runtime_dir)
+
+    _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
+    _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
+
+    if [ "$root_dir" ]; then
+        in_mkdir "$root_dir/$runtime_dir" 700
+        in_mkdir "$config_dir"
+    fi
+
+    eval "${1}=\"\$${1}$S$_A\""
 }
 
 setup_ssh_env() {
@@ -477,10 +482,11 @@ setup_home_env() {
 }
 
 setup_env() {
-    setup_ssh_env  "$1"
-    setup_x11_env  "$1"
-    setup_pa_env   "$1"
-    setup_home_env "$1"
+    setup_runtime_env "$1"
+    setup_ssh_env     "$1"
+    setup_x11_env     "$1"
+    setup_pa_env      "$1"
+    setup_home_env    "$1"
 }
 
 extract_xauth() {
@@ -611,8 +617,6 @@ trap cleanup EXIT
 container_home=$(find_user_info home)
 [ "$container_home" ] ||
     die "failed to find user's home directory"
-
-ensure_runtime_dirs
 
 if [ "$container_name" ]; then
     spawn_root_docker
