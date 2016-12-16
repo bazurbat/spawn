@@ -294,14 +294,18 @@ in_mount() {
     su_run mount "$@" || die
 }
 
-add_user_arg() {
-    local _A=
+get_userspec_arg() {
+    local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
+    echo "--userspec=$uid:$gid"
+}
 
-    if [ "$container_type" = "chroot" ]; then
-        _A="--userspec=$container_user:users"
-    else
-        _A="--user=$container_user"
-    fi
+add_user_arg() {
+    local _A= uid="$(find_user_info uid)"
+
+    case $container_type in
+        nspawn|docker)
+            _A="--user=$uid" ;;
+    esac
 
     eval "${1}=\"\$${1}$S$_A\""
 }
@@ -513,12 +517,14 @@ setup_home_env() {
 }
 
 setup_env() {
-    setup_filesystems "$1"
-    setup_runtime_env "$1"
-    setup_ssh_env     "$1"
-    setup_x11_env     "$1"
-    setup_pa_env      "$1"
-    setup_home_env    "$1"
+    setup_filesystems  "$1"
+    add_user_arg       "$1"
+    add_privileged_arg "$1"
+    setup_runtime_env  "$1"
+    setup_ssh_env      "$1"
+    setup_x11_env      "$1"
+    setup_pa_env       "$1"
+    setup_home_env     "$1"
 }
 
 extract_xauth() {
@@ -572,11 +578,7 @@ spawn_root_chroot() {
         cmd="$cmd && mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts \"$root_dir/dev/pts\""
     fi
 
-    cmd="$cmd && $chroot"
-
-    add_user_arg cmd
-
-    cmd="$cmd \"$root_dir\" $(get_command)"
+    cmd="$cmd && $chroot $(get_userspec_arg) \"$root_dir\" $(get_command)"
 
     su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd"
 }
@@ -586,23 +588,18 @@ spawn_root_nspawn() {
 
     # systemd-nspawn runs 'getent passwd <user>' inside the container to get
     # passwd entry for the user or fails with "Failed to resolve user <user>"
-    add_user_arg A
-    add_privileged_arg A
+
     setup_env A
 
-    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- \
-        $(get_command)
+    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- $(get_command)
 }
 
 spawn_root_docker() {
     local IFS="$S" A=
 
-    add_user_arg A
-    add_privileged_arg A
     setup_env A
 
-    docker run --rm -it $A $passthrough_args $container_name \
-        $(get_command)
+    docker run --rm -it $A $passthrough_args $container_name $(get_command)
 }
 
 if [ $# = 0 ]; then
