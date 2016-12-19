@@ -481,8 +481,11 @@ setup_pa_env() {
 
     [ -S "$pa_sock" ] || die "PulseAudio socket '$pa_sock' does not exist"
 
-    cookie_file="$HOME/.config/pulse/cookie"
+    cookie_file="${XDG_CONFIG_HOME:-${HOME:?}/.config}/pulse/cookie"
     in_cookie_file="$(get_config_dir pulse)/cookie"
+
+    [ -f "$cookie_file" ] ||
+        die "PulseAudio cookie file '$cookie_file' is not found"
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
 
@@ -499,7 +502,7 @@ setup_pa_env() {
             ;;
     esac
 
-    chmod 666 "$cookie_file" || die
+    chmod 644 "$cookie_file" || die
 
     eval "${1}=\"\$${1}$S$PA_A\""
 }
