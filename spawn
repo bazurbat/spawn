@@ -24,8 +24,11 @@ share_system=
 bind_home=
 chroot=
 
-xauth_file=
+in_ssh_sock=
 in_xauth_file=
+in_pa_sock=
+
+xauth_file=
 xsock_dir='/tmp/.X11-unix'
 
 show_usage() {
@@ -240,6 +243,10 @@ find_user_info() {
     fi
 }
 
+get_my_config_dir() {
+    echo "${XDG_CONFIG_HOME:-${HOME:?}/.config}${1:+/$1}"
+}
+
 get_config_dir() {
     local home_dir="$(find_user_info home)"
     local config_dir="${home_dir:?}/.config"
@@ -304,7 +311,7 @@ in_mount() {
 }
 
 in_mount2() {
-    local from="${1:-?}" to="${2:-?}"
+    local from="${1:?}" to="${2:?}"
     shift 2
     if [ -d "$from" ]; then
         in_mkdir "$to"
@@ -429,26 +436,29 @@ setup_runtime_env() {
 }
 
 setup_ssh_env() {
-    local SSH_A= uid= ssh_sock=
+    local SSH_A= uid=
 
     [ "${with_ssh_agent-}" ] || return 0
 
     [ "${SSH_AUTH_SOCK-}" ] ||
-        die "SSH_AUTH_SOCK is not set"
+        die "passing of SSH agent is enabled but SSH_AUTH_SOCK is not set"
     [ -S "$SSH_AUTH_SOCK" ] ||
-        die "$SSH_AUTH_SOCK socket is not exists"
+        die "$SSH_AUTH_SOCK socket is not exists or is not a socket"
+
+    in_ssh_sock=$(mktemp -u -p "$(get_runtime_dir)" ssh.XXXXXXXXXX)
+    : ${in_ssh_sock:?}
 
     uid=$(find_user_info uid)
-    ssh_sock=$(get_runtime_dir)/ssh
+    : ${uid:?}
 
-    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$ssh_sock")"
+    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$in_ssh_sock")"
 
     case $container_type in
         chroot)
-            in_mount2 "$SSH_AUTH_SOCK" "$root_dir/$ssh_sock" --bind
+            in_mount2 "$SSH_AUTH_SOCK" "$root_dir/$in_ssh_sock" --bind
             ;;
         *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$ssh_sock")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$in_ssh_sock")"
             ;;
     esac
 
@@ -514,24 +524,28 @@ setup_x11_env() {
 }
 
 setup_pa_env() {
-    local PA_A= uid=
-    local pa_sock= in_pa_sock=
-    local cookie_file= in_cookie_file=
+    local PA_A= pa_sock= cookie_file= in_cookie_file= uid=
 
     [ "${with_pulseaudio-}" ] || return 0
 
-    uid=$(find_user_info uid)
     pa_sock=$(get_pa_socket)
-    in_pa_sock=$(get_runtime_dir)/pulse
 
+    [ "$pa_sock" ] ||
+        die "passing of PulseAudio is enabled but the socket could not be found"
     [ -S "$pa_sock" ] ||
-        die "PulseAudio socket '$pa_sock' is not exists"
+        die "PulseAudio socket '$pa_sock' is not exists or is not a socket"
 
-    cookie_file="${XDG_CONFIG_HOME:-${HOME:?}/.config}/pulse/cookie"
-    in_cookie_file="$(get_config_dir pulse)/cookie"
+    in_pa_sock=$(mktemp -u -p "$(get_runtime_dir)" pulse.XXXXXXXXXX)
+    : ${in_pa_sock:?}
+
+    cookie_file=$(get_my_config_dir pulse)/cookie
+    in_cookie_file=$(get_config_dir pulse)/cookie
 
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
+
+    uid=$(find_user_info uid)
+    : ${uid:?}
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
 
@@ -622,8 +636,16 @@ cleanup() {
     fi
 
     if [ "$root_dir" ]; then
+        if [ "$in_ssh_sock" ] && [ -f "$root_dir/$in_ssh_sock" ]; then
+            su_run rm -f "$root_dir/$in_ssh_sock"
+        fi
+
         if [ "$in_xauth_file" ] && [ -f "$root_dir/$in_xauth_file" ]; then
             su_run rm -f "$root_dir/$in_xauth_file"
+        fi
+
+        if [ "$in_pa_sock" ] && [ -f "$root_dir/$in_pa_sock" ]; then
+            su_run rm -f "$root_dir/$in_pa_sock"
         fi
     fi
 }
