@@ -176,6 +176,10 @@ die() {
     exit $status
 }
 
+warn() {
+    echo "Warning: $*"
+}
+
 su_run() {
     if [ "${UID-}" = "0" ]; then
         "$@"
@@ -294,6 +298,17 @@ in_mount() {
     su_run mount "$@" || die
 }
 
+in_mount2() {
+    local from="${1:-?}" to="${2:-?}"
+    shift 2
+    if [ -d "$from" ]; then
+        in_mkdir "$to"
+    else
+        in_touch "$to"
+    fi
+    su_run mount "$@" "$from" "$to" || die
+}
+
 get_userspec_arg() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
     echo "--userspec=$uid:$gid"
@@ -409,26 +424,34 @@ setup_runtime_env() {
 }
 
 setup_ssh_env() {
-    local SSH_A=
+    local SSH_A= uid= ssh_sock=
 
     [ "${with_ssh_agent-}" ] || return 0
 
-    [ "$SSH_AUTH_SOCK" ] ||
+    [ "${SSH_AUTH_SOCK-}" ] ||
         die "SSH_AUTH_SOCK is not set"
     [ -S "$SSH_AUTH_SOCK" ] ||
         die "$SSH_AUTH_SOCK socket is not exists"
 
-    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")"
+    uid=$(find_user_info uid)
+    ssh_sock=$(get_runtime_dir)/ssh
+
+    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$ssh_sock")"
 
     case $container_type in
         chroot)
-            in_touch "$root_dir/$SSH_AUTH_SOCK"
-            in_mount --bind "$SSH_AUTH_SOCK" "$root_dir/$SSH_AUTH_SOCK"
+            in_mount2 "$SSH_AUTH_SOCK" "$root_dir/$ssh_sock" --bind
             ;;
         *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$ssh_sock")"
             ;;
     esac
+
+    if [ "$UID" != "$uid" ]; then
+        warn "current UID ($UID) does not match UID inside the container \
+($uid) but SSH socket sharing is requested -- changing $SSH_AUTH_SOCK mode to 777"
+        su_run chmod 777 "$SSH_AUTH_SOCK" || die
+    fi
 
     eval "${1}=\"\$${1}$S$SSH_A\""
 }
