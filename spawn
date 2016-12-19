@@ -237,7 +237,7 @@ find_user_info() {
 
 get_config_dir() {
     local home_dir="$(find_user_info home)"
-    local config_dir="$home_dir/.config"
+    local config_dir="${home_dir:?}/.config"
 
     echo "$config_dir${1:+/$1}"
 }
