@@ -25,6 +25,7 @@ bind_home=
 chroot=
 
 xauth_file=
+in_xauth_file=
 xsock_dir='/tmp/.X11-unix'
 
 show_usage() {
@@ -246,6 +247,10 @@ get_config_dir() {
     echo "$config_dir${1:+/$1}"
 }
 
+get_my_runtime_dir() {
+    echo "${XDG_RUNTIME_DIR:-/run/user/${UID:?}}${1:+/$1}"
+}
+
 get_runtime_dir() {
     local uid="$(find_user_info uid)"
     local runtime_dir="/run/user/${uid:?}"
@@ -457,37 +462,53 @@ setup_ssh_env() {
 }
 
 setup_x11_env() {
-    local X11_A=
+    local X11_A= uid=
 
     [ "${with_x11-}" ] || return 0
 
-    [ "$DISPLAY" ] ||
+    [ "${DISPLAY-}" ] ||
         die "passing of X11 environment is enabled but DISPLAY is not set"
     [ -d "$xsock_dir" ] ||
         die "X11 socket directory '$xsock_dir' is not exists"
 
-    extract_xauth
-    [ -f "$xauth_file" ] || die "no X authority file"
-    [ -d "$xsock_dir"  ] || die "no X socket directory"
+    uid=$(find_user_info uid)
+    xauth_file=$(mktemp -p "$(get_my_runtime_dir)" spawn-xauth.XXXXXXXXXX)
+    in_xauth_file=$(mktemp -u -p "$(get_runtime_dir)" xauth.XXXXXXXXXX)
+
+    : ${uid:?}
+    : ${xauth_file:?}
+    : ${in_xauth_file:?}
+
+    extract_xauth "$xauth_file"
+
+    [ -f "$xauth_file" ] ||
+        die "could not find extracted X authority file '$xauth_file'"
 
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
-    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$xauth_file")"
+    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$in_xauth_file")"
 
     # disable Qt's usage of shared memory which we do not expose
     X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
 
+    # Exposing whole X11 socket directory is probably a bad idea, hopefully
+    # assuming that most users are running single X11 instance.
+
     case $container_type in
         chroot)
-            in_touch "$root_dir/$xauth_file"
-            in_mkdir "$root_dir/$xsock_dir"
-            in_mount --bind "$xauth_file" "$root_dir/$xauth_file"
-            in_mount --bind "$xsock_dir" "$root_dir/$xsock_dir"
+            in_mount2 "$xauth_file" "$root_dir/$in_xauth_file" --bind
+            in_mount2 "$xsock_dir" "$root_dir/$xsock_dir" --bind
             ;;
         *)
-            X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$xauth_file")"
+            X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$in_xauth_file")"
             X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
             ;;
     esac
+
+    if [ "$UID" != "$uid" ]; then
+        # Assuming that we are binding the file inside a running user's private
+        # directory -- nobody should be able to see it, hence no warning.
+        chmod 666 "$xauth_file" || die
+    fi
 
     eval "${1}=\"\$${1}$S$X11_A\""
 }
@@ -567,11 +588,10 @@ setup_env() {
 }
 
 extract_xauth() {
-    xauth_file=$(mktemp)
     # Use wildcard authentication family because hostname of container can
     # differ from the host and default Xauthority files are hostname specific.
     # See http://stackoverflow.com/a/25280523 for details.
-    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$xauth_file" nmerge -
+    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
 }
 
 copy_resolv_conf() {
@@ -597,10 +617,13 @@ cleanup() {
         done
     fi
 
-    if [ "$xauth_file" ]; then
+    if [ "$xauth_file" ] && [ -f "$xauth_file" ]; then
         su_run rm -f "$xauth_file"
-        if [ "$root_dir" ]; then
-            su_run rm -f "$root_dir/$xauth_file"
+    fi
+
+    if [ "$root_dir" ]; then
+        if [ "$in_xauth_file" ] && [ -f "$root_dir/$in_xauth_file" ]; then
+            su_run rm -f "$root_dir/$in_xauth_file"
         fi
     fi
 }
