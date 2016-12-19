@@ -493,16 +493,18 @@ setup_x11_env() {
 }
 
 setup_pa_env() {
-    local PA_A=
+    local PA_A= uid=
     local pa_sock= in_pa_sock=
     local cookie_file= in_cookie_file=
 
     [ "${with_pulseaudio-}" ] || return 0
 
+    uid=$(find_user_info uid)
     pa_sock=$(get_pa_socket)
-    in_pa_sock="$(get_runtime_dir pulse)/native"
+    in_pa_sock=$(get_runtime_dir)/pulse
 
-    [ -S "$pa_sock" ] || die "PulseAudio socket '$pa_sock' does not exist"
+    [ -S "$pa_sock" ] ||
+        die "PulseAudio socket '$pa_sock' is not exists"
 
     cookie_file="${XDG_CONFIG_HOME:-${HOME:?}/.config}/pulse/cookie"
     in_cookie_file="$(get_config_dir pulse)/cookie"
@@ -514,10 +516,8 @@ setup_pa_env() {
 
     case $container_type in
         chroot)
-            in_touch "$root_dir/$in_pa_sock"
-            in_touch "$root_dir/$in_cookie_file"
-            in_mount --bind "$pa_sock" "$root_dir/$in_pa_sock"
-            in_mount --bind "$cookie_file" "$root_dir/$in_cookie_file"
+            in_mount2 "$pa_sock" "$root_dir/$in_pa_sock" --bind
+            in_mount2 "$cookie_file" "$root_dir/$in_cookie_file" --bind
             ;;
         *)
             PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
@@ -525,7 +525,11 @@ setup_pa_env() {
             ;;
     esac
 
-    chmod 644 "$cookie_file" || die
+    if [ "$UID" != "$uid" ]; then
+        warn "current UID ($UID) does not match UID inside the container \
+($uid) but PulseAudio sharing is requested -- changing $cookie_file mode to 644"
+        chmod 644 "$cookie_file" || die
+    fi
 
     eval "${1}=\"\$${1}$S$PA_A\""
 }
