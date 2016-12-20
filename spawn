@@ -1,6 +1,6 @@
 #!/bin/sh
 
-set -u
+set -eu
 
 program_name="spawn"
 
@@ -10,7 +10,6 @@ root_dir=
 container_type=
 container_name=
 container_user="dev"
-container_group="users"
 container_home=
 container_command=
 passthrough_args=
@@ -23,12 +22,9 @@ share_system=
 bind_home=
 chroot=
 
-in_ssh_sock=
-in_xauth_file=
-in_pa_sock=
-in_cookie_file= 
+this_runtime_dir=
+runtime_dir=
 
-xauth_file=
 xsock_dir='/tmp/.X11-unix'
 
 show_usage() {
@@ -299,28 +295,6 @@ in_mkdir() {
     su_run install -o "$uid" -g "$gid" ${2:+"-m$2"} -d "$1" || die
 }
 
-in_touch() {
-    local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
-    su_run install -o "$uid" -g "$gid" -d "$(dirname "$1")" || die
-    su_run touch "$1" || die
-    su_run chown "$uid:$gid" "$1" || die
-}
-
-in_mount() {
-    su_run mount "$@" || die
-}
-
-in_mount2() {
-    local from="${1:?}" to="${2:?}"
-    shift 2
-    if [ -d "$from" ]; then
-        in_mkdir "$to"
-    else
-        in_touch "$to"
-    fi
-    su_run mount "$@" "$from" "$to" || die
-}
-
 get_userspec_arg() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
     echo "--userspec=$uid:$gid"
@@ -382,25 +356,33 @@ setup_filesystems() {
     [ "$container_type" = "chroot" ] || return 0
 
     if [ "$share_system" ]; then
-        su_run mkdir -p "$root_dir/sys"            || die
-        su_run mount --rbind /sys "$root_dir/sys"  || die
-        su_run mount --make-rslave "$root_dir/sys" || die
-        su_run mkdir -p "$root_dir/dev"            || die
-        su_run mount --rbind /dev "$root_dir/dev"  || die
-        su_run mount --make-rslave "$root_dir/dev" || die
+        su_run mkdir -p "$root_dir/sys"
+        su_run mount --rbind /sys "$root_dir/sys"
+        su_run mount --make-rslave "$root_dir/sys"
+        su_run mkdir -p "$root_dir/dev"
+        su_run mount --rbind /dev "$root_dir/dev"
+        su_run mount --make-rslave "$root_dir/dev"
     else
         if [ -h "$root_dir/dev/shm" ]; then
-            su_run rm "$root_dir/dev/shm" || die
+            su_run rm "$root_dir/dev/shm"
         fi
-        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts" || die
+        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
     fi
 }
 
 setup_runtime_env() {
-    local _A= config_dir= runtime_dir= uid= gid=
+    local _A= uid= gid= config_dir=
 
-    config_dir=$(get_config_dir)
-    runtime_dir=$(get_runtime_dir)
+    uid=$(find_user_info uid); : ${uid:?}
+    gid=$(find_user_info gid); : ${gid:?}
+
+    config_dir=$(get_config_dir); : ${config_dir:?}
+
+    this_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
+    : ${this_runtime_dir:?}
+    runtime_dir=$(get_runtime_dir); : ${runtime_dir:?}
+
+    su_run mount -t tmpfs -o uid=$uid,gid=$gid,mode=700 tmpfs "$this_runtime_dir"
 
     case $container_type in
         chroot)
@@ -415,14 +397,12 @@ setup_runtime_env() {
                 _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
             fi
 
-            in_mkdir "$root_dir/$runtime_dir" 700
+            in_mkdir "$root_dir$runtime_dir"
             ;;
-        nspawn)
-            uid=$(find_user_info uid)
-            gid=$(find_user_info gid)
+        *)
+            _A="$_A$S$(make_bind_arg $this_runtime_dir:$runtime_dir)"
+            ;;
 
-            _A="$_A$S--tmpfs=$runtime_dir:uid=$uid,gid=$gid,mode=700"
-            ;;
     esac
 
     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
@@ -445,34 +425,32 @@ setup_ssh_env() {
     [ -S "$SSH_AUTH_SOCK" ] ||
         die "$SSH_AUTH_SOCK socket is not exists or is not a socket"
 
-    in_ssh_sock=$(mktemp -u -p "$(get_runtime_dir)" ssh.XXXXXXXXXX)
-    : ${in_ssh_sock:?}
+    uid=$(find_user_info uid); : ${uid:?}
 
-    uid=$(find_user_info uid)
-    : ${uid:?}
-
-    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$in_ssh_sock")"
+    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$runtime_dir/ssh")"
 
     case $container_type in
         chroot)
-            in_mount2 "$SSH_AUTH_SOCK" "$root_dir/$in_ssh_sock" --bind
+            su_run touch "$this_runtime_dir/ssh"
+            su_run mount --bind "$SSH_AUTH_SOCK" "$this_runtime_dir/ssh"
             ;;
         *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$in_ssh_sock")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$runtime_dir/ssh")"
             ;;
     esac
 
     if [ "$UID" != "$uid" ]; then
         warn "current UID ($UID) does not match UID inside the container \
-($uid) but SSH socket sharing is requested -- changing $SSH_AUTH_SOCK mode to 777"
-        su_run chmod 777 "$SSH_AUTH_SOCK" || die
+($uid) but SSH agent socket sharing is requested -- changing $SSH_AUTH_SOCK \
+mode to world writeable/readable (666)"
+        su_run chmod 666 "$SSH_AUTH_SOCK"
     fi
 
     eval "${1}=\"\$${1}$S$SSH_A\""
 }
 
 setup_x11_env() {
-    local X11_A= uid=
+    local X11_A= xauth_file=
 
     [ "${with_x11-}" ] || return 0
 
@@ -481,21 +459,13 @@ setup_x11_env() {
     [ -d "$xsock_dir" ] ||
         die "X11 socket directory '$xsock_dir' is not exists"
 
-    uid=$(find_user_info uid)
-    xauth_file=$(mktemp -p "$(get_my_runtime_dir)" spawn-xauth.XXXXXXXXXX)
-    in_xauth_file=$(mktemp -u -p "$(get_runtime_dir)" xauth.XXXXXXXXXX)
-
-    : ${uid:?}
-    : ${xauth_file:?}
-    : ${in_xauth_file:?}
-
+    xauth_file="$this_runtime_dir/Xauthority"
+    su_run touch "$xauth_file"
     extract_xauth "$xauth_file"
-
-    [ -f "$xauth_file" ] ||
-        die "could not find extracted X authority file '$xauth_file'"
+    su_run chmod 666 "$xauth_file"
 
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
-    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$in_xauth_file")"
+    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$runtime_dir/Xauthority")"
 
     # disable Qt's usage of shared memory which we do not expose
     X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
@@ -505,66 +475,47 @@ setup_x11_env() {
 
     case $container_type in
         chroot)
-            in_mount2 "$xauth_file" "$root_dir/$in_xauth_file" --bind
-            in_mount2 "$xsock_dir" "$root_dir/$xsock_dir" --bind
+            su_run mkdir -p "$xsock_dir"
+            su_run mount --bind "$xsock_dir" "$root_dir$xsock_dir"
             ;;
         *)
-            X11_A="$X11_A$S$(make_bind_arg "$xauth_file:$in_xauth_file")"
             X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
             ;;
     esac
-
-    if [ "$UID" != "$uid" ]; then
-        # Assuming that we are binding the file inside a running user's private
-        # directory -- nobody should be able to see it, hence no warning.
-        chmod 666 "$xauth_file" || die
-    fi
 
     eval "${1}=\"\$${1}$S$X11_A\""
 }
 
 setup_pa_env() {
-    local PA_A= pa_sock= cookie_file= uid=
+    local PA_A= sock_file= cookie_file=
 
     [ "${with_pulseaudio-}" ] || return 0
 
-    pa_sock=$(get_pa_socket)
+    sock_file=$(get_pa_socket)
 
-    [ "$pa_sock" ] ||
+    [ "$sock_file" ] ||
         die "passing of PulseAudio is enabled but the socket could not be found"
-    [ -S "$pa_sock" ] ||
-        die "PulseAudio socket '$pa_sock' is not exists or is not a socket"
-
-    in_pa_sock=$(mktemp -u -p "$(get_runtime_dir)" pulse.XXXXXXXXXX)
-    : ${in_pa_sock:?}
+    [ -S "$sock_file" ] ||
+        die "PulseAudio socket '$sock_file' is not exists or is not a socket"
 
     cookie_file=$(get_my_config_dir pulse)/cookie
-    in_cookie_file=$(get_config_dir pulse)/cookie
-
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
+    su_run cp "$cookie_file" "$this_runtime_dir/pulse_cookie"
+    su_run chmod 666 "$this_runtime_dir/pulse_cookie"
 
-    uid=$(find_user_info uid)
-    : ${uid:?}
-
-    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$in_pa_sock")"
+    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$runtime_dir/pulse_sock")"
+    PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$runtime_dir/pulse_cookie")"
 
     case $container_type in
         chroot)
-            in_mount2 "$pa_sock" "$root_dir/$in_pa_sock" --bind
-            in_mount2 "$cookie_file" "$root_dir/$in_cookie_file" --bind
+            su_run touch "$this_runtime_dir/pulse_sock"
+            su_run mount --bind "$sock_file" "$this_runtime_dir/pulse_sock"
             ;;
         *)
-            PA_A="$PA_A$S$(make_bind_arg "$pa_sock:$in_pa_sock")"
-            PA_A="$PA_A$S$(make_bind_arg "$cookie_file:$in_cookie_file")"
+            PA_A="$PA_A$S$(make_bind_arg "$sock_file:$runtime_dir/pulse_sock")"
             ;;
     esac
-
-    if [ "$UID" != "$uid" ]; then
-        warn "current UID ($UID) does not match UID inside the container \
-($uid) but PulseAudio sharing is requested -- changing $cookie_file mode to 644"
-        chmod 644 "$cookie_file" || die
-    fi
 
     eval "${1}=\"\$${1}$S$PA_A\""
 }
@@ -582,7 +533,7 @@ setup_home_env() {
     fi
 
     if [ "$container_type" = "chroot" ]; then
-        in_mount --bind "$bind_home" "$root_dir/$container_home"
+        su_run mount --bind "$bind_home" "$root_dir/$container_home"
     else
         HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$container_home")"
     fi
@@ -605,7 +556,7 @@ extract_xauth() {
     # Use wildcard authentication family because hostname of container can
     # differ from the host and default Xauthority files are hostname specific.
     # See http://stackoverflow.com/a/25280523 for details.
-    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
+    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | su_run xauth -f "$1" nmerge -
 }
 
 copy_resolv_conf() {
@@ -627,7 +578,7 @@ umount_all() {
         root="$(realpath "$root_dir")"
         for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
         do
-            su_run umount "$mp"
+            su_run umount "$mp" || true
         done
     fi
 }
@@ -636,52 +587,38 @@ cleanup() {
     # Checking for file existence requires appropriate file permissions too and
     # files can reside inside the user's runtime dir which may not be
     # accessible to normal user running the script.
+
     if [ "$root_dir" ]; then
-        if [ "$in_ssh_sock" ]; then
-            su_run mountpoint -q "$root_dir$in_ssh_sock" && \
-                su_run umount "$root_dir$in_ssh_sock"
-            su_run rm -f "$root_dir$in_ssh_sock"
-        fi
-
-        if [ "$in_xauth_file" ]; then
-            su_run mountpoint -q "$root_dir$in_xauth_file" && \
-                su_run umount "$root_dir$in_xauth_file"
-            su_run rm -f "$root_dir$in_xauth_file"
-        fi
-
-        if [ "$in_pa_sock" ]; then
-            su_run mountpoint -q "$root_dir$in_pa_sock" && \
-                su_run umount "$root_dir$in_pa_sock"
-            su_run rm -f "$root_dir$in_pa_sock"
-        fi
-
-        if [ "$in_cookie_file" ]; then
-            su_run mountpoint -q "$root_dir$in_cookie_file" && \
-                su_run umount "$root_dir$in_cookie_file"
+        if [ "$runtime_dir" ]; then
+            su_run mountpoint -q "$root_dir$runtime_dir" && \
+                su_run umount -R "$root_dir$runtime_dir" || true
         fi
 
         su_run mountpoint -q "$root_dir$xsock_dir" && \
-            su_run umount "$root_dir$xsock_dir"
+            su_run umount "$root_dir$xsock_dir" || true
 
         su_run mountpoint -q "$root_dir/dev" && \
-            su_run umount -R "$root_dir/dev"
-
-        su_run mountpoint -q "$root_dir/sys" && \
-            su_run umount -R "$root_dir/sys"
+            su_run umount -R "$root_dir/dev" || true
 
         su_run mountpoint -q "$root_dir/dev/shm" && \
-            su_run umount "$root_dir/dev/shm"
+            su_run umount "$root_dir/dev/shm" || true
 
         su_run mountpoint -q "$root_dir/dev/pts" && \
-            su_run umount "$root_dir/dev/pts"
+            su_run umount "$root_dir/dev/pts" || true
+
+        su_run mountpoint -q "$root_dir/sys" && \
+            su_run umount -R "$root_dir/sys" || true
 
         su_run mountpoint -q "$root_dir/proc" && \
-            su_run umount "$root_dir/proc"
+            su_run umount "$root_dir/proc" || true
     fi
 
-    if [ "$xauth_file" ]; then
-        su_run rm -f "$xauth_file"
+    if [ "$this_runtime_dir" ]; then
+        su_run mountpoint -q "$this_runtime_dir" && \
+            su_run umount -R "$this_runtime_dir" || true
+        su_run rm -rf "$this_runtime_dir" || true
     fi
+
 }
 
 spawn_root_chroot() {
@@ -695,6 +632,8 @@ spawn_root_chroot() {
         cmd="$cmd && mount -t tmpfs -o nosuid,nodev,noexec shm \"$root_dir/dev/shm\""
         cmd="$cmd && mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts \"$root_dir/dev/pts\""
     fi
+
+    cmd="$cmd && mount --rbind \"$this_runtime_dir\" \"$root_dir$runtime_dir\""
 
     cmd="$cmd && $chroot $(get_userspec_arg) \"$root_dir\" $(get_command)"
 
