@@ -19,7 +19,6 @@ root_arch=
 with_ssh_agent=
 with_pulseaudio=
 with_x11=
-cleanup_only=
 share_system=
 bind_home=
 chroot=
@@ -27,6 +26,7 @@ chroot=
 in_ssh_sock=
 in_xauth_file=
 in_pa_sock=
+in_cookie_file= 
 
 xauth_file=
 xsock_dir='/tmp/.X11-unix'
@@ -47,7 +47,7 @@ OPTIONS:
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --cleanup             Execute cleanup procedures only
+  --umount-all          Release all mount points for the root directory
   --share-system        Share dev and sys with the host
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
@@ -92,8 +92,8 @@ parse_command_line() {
                     with_x11=1 ;;
                 --with-pulseaudio)
                     with_pulseaudio=1 ;;
-                --cleanup)
-                    cleanup_only=1 ;;
+                --umount-all)
+                    umount_all=1 ;;
                 --share-system)
                     share_system=1 ;;
                 --using-docker)
@@ -524,7 +524,7 @@ setup_x11_env() {
 }
 
 setup_pa_env() {
-    local PA_A= pa_sock= cookie_file= in_cookie_file= uid=
+    local PA_A= pa_sock= cookie_file= uid=
 
     [ "${with_pulseaudio-}" ] || return 0
 
@@ -620,33 +620,67 @@ fix_mtab() {
     fi
 }
 
-cleanup() {
-    local root=
+umount_all() {
+    local IFS="$(printf '\n\t')" root= mp=
 
     if [ "$container_type" = 'chroot' ]; then
         root="$(realpath "$root_dir")"
         for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
         do
-            su_run umount "$mp" || true
+            su_run umount "$mp"
         done
     fi
+}
 
-    if [ "$xauth_file" ] && [ -f "$xauth_file" ]; then
-        su_run rm -f "$xauth_file"
+cleanup() {
+    # Checking for file existence requires appropriate file permissions too and
+    # files can reside inside the user's runtime dir which may not be
+    # accessible to normal user running the script.
+    if [ "$root_dir" ]; then
+        if [ "$in_ssh_sock" ]; then
+            su_run mountpoint -q "$root_dir$in_ssh_sock" && \
+                su_run umount "$root_dir$in_ssh_sock"
+            su_run rm -f "$root_dir$in_ssh_sock"
+        fi
+
+        if [ "$in_xauth_file" ]; then
+            su_run mountpoint -q "$root_dir$in_xauth_file" && \
+                su_run umount "$root_dir$in_xauth_file"
+            su_run rm -f "$root_dir$in_xauth_file"
+        fi
+
+        if [ "$in_pa_sock" ]; then
+            su_run mountpoint -q "$root_dir$in_pa_sock" && \
+                su_run umount "$root_dir$in_pa_sock"
+            su_run rm -f "$root_dir$in_pa_sock"
+        fi
+
+        if [ "$in_cookie_file" ]; then
+            su_run mountpoint -q "$root_dir$in_cookie_file" && \
+                su_run umount "$root_dir$in_cookie_file"
+        fi
+
+        su_run mountpoint -q "$root_dir$xsock_dir" && \
+            su_run umount "$root_dir$xsock_dir"
+
+        su_run mountpoint -q "$root_dir/dev" && \
+            su_run umount -R "$root_dir/dev"
+
+        su_run mountpoint -q "$root_dir/sys" && \
+            su_run umount -R "$root_dir/sys"
+
+        su_run mountpoint -q "$root_dir/dev/shm" && \
+            su_run umount "$root_dir/dev/shm"
+
+        su_run mountpoint -q "$root_dir/dev/pts" && \
+            su_run umount "$root_dir/dev/pts"
+
+        su_run mountpoint -q "$root_dir/proc" && \
+            su_run umount "$root_dir/proc"
     fi
 
-    if [ "$root_dir" ]; then
-        if [ "$in_ssh_sock" ] && [ -f "$root_dir/$in_ssh_sock" ]; then
-            su_run rm -f "$root_dir/$in_ssh_sock"
-        fi
-
-        if [ "$in_xauth_file" ] && [ -f "$root_dir/$in_xauth_file" ]; then
-            su_run rm -f "$root_dir/$in_xauth_file"
-        fi
-
-        if [ "$in_pa_sock" ] && [ -f "$root_dir/$in_pa_sock" ]; then
-            su_run rm -f "$root_dir/$in_pa_sock"
-        fi
+    if [ "$xauth_file" ]; then
+        su_run rm -f "$xauth_file"
     fi
 }
 
@@ -694,8 +728,8 @@ fi
 parse_command_line "$@"
 validate_environment
 
-if [ "$cleanup_only" ]; then
-    cleanup
+if [ "${umount_all-}" ]; then
+    umount_all
     exit
 fi
 
