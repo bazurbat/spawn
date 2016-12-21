@@ -17,7 +17,7 @@ Features:
 ## Options
 
 ```
-Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
+Usage: spawn [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
 
   Spawns new container or chroot and configures shared environment.
 
@@ -31,7 +31,8 @@ OPTIONS:
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --cleanup             Execute cleanup procedures only
+  --umount-all          Release all mount points for the root directory
+  --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
 
