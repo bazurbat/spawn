@@ -12,7 +12,7 @@ Features:
   * Bind mount the specified directory as home
   * Sharing SSH agent
   * Sharing X11
-  * Sharing PulseAudio 
+  * Sharing PulseAudio
 
 ## Options
 
@@ -47,4 +47,14 @@ SYNOPSIS:
   will have an effect. If none was given and the first non option argument
   specifies an existing directory then chroot will be assumed, otherwise the
   name will be passed to 'docker run'.
+
+NOTE:
+
+  If you get "Connection failure: Protocol error" error when trying to run
+  PulseAudio applications inside the chroot, you need to disable communication
+  through shared memory for the client. Add:
+
+    enable-shm = no
+
+  to "/etc/pulse/client.conf" inside the root-dir.
 ```
