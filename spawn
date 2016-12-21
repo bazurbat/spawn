@@ -609,11 +609,16 @@ mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
 mount -t tmpfs -o nosuid,nodev shm "$root_dir/dev/shm"
 mount -t devpts -o nosuid,noexec,gid=5,mode=620,ptmxmode=666,newinstance devpts "$root_dir/dev/pts"
 ln -snf pts/ptmx "$root_dir/dev/ptmx"
+ln -snf /proc/self/fd "$root_dir/dev/fd"
+ln -snf /proc/self/fd/0 "$root_dir/dev/stdin"
+ln -snf /proc/self/fd/1 "$root_dir/dev/stdout"
+ln -snf /proc/self/fd/2 "$root_dir/dev/stderr"
 mknod "$root_dir/dev/null" c 1 3
 mknod "$root_dir/dev/zero" c 1 5
+mknod "$root_dir/dev/random" c 1 8
+mknod "$root_dir/dev/urandom" c 1 9
 mknod "$root_dir/dev/console" c 5 1
 mknod "$root_dir/dev/tty" c 5 0
-mknod "$root_dir/dev/tty0" c 4 0
 mount -t sysfs sysfs "$root_dir/sys"
 EOF
 )"
