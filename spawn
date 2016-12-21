@@ -18,7 +18,7 @@ root_arch=
 with_ssh_agent=
 with_pulseaudio=
 with_x11=
-share_system=
+share_devices=
 bind_home=
 chroot=
 
@@ -44,7 +44,7 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount-all          Release all mount points for the root directory
-  --share-system        Share dev and sys with the host
+  --share-devices       Share devices with the host
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
 
@@ -90,8 +90,8 @@ parse_command_line() {
                     with_pulseaudio=1 ;;
                 --umount-all)
                     umount_all=1 ;;
-                --share-system)
-                    share_system=1 ;;
+                --share-devices)
+                    share_devices=1 ;;
                 --using-docker)
                     container_type='docker' ;;
                 --using-nspawn)
@@ -314,7 +314,7 @@ add_user_arg() {
 add_privileged_arg() {
     local _A=
 
-    [ "${share_system-}" ] || return 0
+    [ "${share_devices-}" ] || return 0
 
     case $container_type in
         nspawn)
@@ -355,7 +355,7 @@ make_bind_arg() {
 setup_filesystems() {
     [ "$container_type" = "chroot" ] || return 0
 
-    if [ "$share_system" ]; then
+    if [ "$share_devices" ]; then
         su_run mkdir -p "$root_dir/sys"
         su_run mount --rbind /sys "$root_dir/sys"
         su_run mount --make-rslave "$root_dir/sys"
@@ -628,7 +628,7 @@ spawn_root_chroot() {
 
     cmd="mount -t proc proc \"$root_dir/proc\""
 
-    if ! [ "$share_system" ]; then
+    if ! [ "$share_devices" ]; then
         cmd="$cmd && mount -t tmpfs -o nosuid,nodev,noexec shm \"$root_dir/dev/shm\""
         cmd="$cmd && mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts \"$root_dir/dev/pts\""
     fi
