@@ -18,7 +18,6 @@ root_arch=
 with_ssh_agent=
 with_pulseaudio=
 with_x11=
-share_devices=
 bind_home=
 chroot=
 
@@ -44,7 +43,7 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --umount-all          Release all mount points for the root directory
-  --share-devices       Share devices with the host
+  --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
 
@@ -311,21 +310,6 @@ add_user_arg() {
     eval "${1}=\"\$${1}$S$_A\""
 }
 
-add_privileged_arg() {
-    local _A=
-
-    [ "${share_devices-}" ] || return 0
-
-    case $container_type in
-        nspawn)
-            _A="--share-system" ;;
-        docker)
-            _A="--privileged" ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$_A\""
-}
-
 make_setarch() {
     case $root_arch in
         x86|i?86)
@@ -350,24 +334,6 @@ make_bind_arg() {
         nspawn) echo "--bind=$value" ;;
         docker) echo "--volume=$value" ;;
     esac
-}
-
-setup_filesystems() {
-    [ "$container_type" = "chroot" ] || return 0
-
-    if [ "$share_devices" ]; then
-        su_run mkdir -p "$root_dir/sys"
-        su_run mount --rbind /sys "$root_dir/sys"
-        su_run mount --make-rslave "$root_dir/sys"
-        su_run mkdir -p "$root_dir/dev"
-        su_run mount --rbind /dev "$root_dir/dev"
-        su_run mount --make-rslave "$root_dir/dev"
-    else
-        if [ -h "$root_dir/dev/shm" ]; then
-            su_run rm "$root_dir/dev/shm"
-        fi
-        su_run mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
-    fi
 }
 
 setup_runtime_env() {
@@ -475,7 +441,7 @@ setup_x11_env() {
 
     case $container_type in
         chroot)
-            su_run mkdir -p "$xsock_dir"
+            su_run mkdir -p "$root_dir$xsock_dir"
             su_run mount --bind "$xsock_dir" "$root_dir$xsock_dir"
             ;;
         *)
@@ -542,14 +508,12 @@ setup_home_env() {
 }
 
 setup_env() {
-    setup_filesystems  "$1"
-    add_user_arg       "$1"
-    add_privileged_arg "$1"
-    setup_runtime_env  "$1"
-    setup_ssh_env      "$1"
-    setup_x11_env      "$1"
-    setup_pa_env       "$1"
-    setup_home_env     "$1"
+    add_user_arg      "$1"
+    setup_runtime_env "$1"
+    setup_ssh_env     "$1"
+    setup_x11_env     "$1"
+    setup_pa_env      "$1"
+    setup_home_env    "$1"
 }
 
 extract_xauth() {
@@ -626,16 +590,40 @@ spawn_root_chroot() {
 
     setup_env env
 
-    cmd="mount -t proc proc \"$root_dir/proc\""
+    cmd=$(cat <<EOF
+set -e
+mount -t proc proc "${root_dir}/proc"
+EOF
+)
 
-    if ! [ "$share_devices" ]; then
-        cmd="$cmd && mount -t tmpfs -o nosuid,nodev,noexec shm \"$root_dir/dev/shm\""
-        cmd="$cmd && mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts \"$root_dir/dev/pts\""
+    if [ "${share_devices-}" ]; then
+        su_run mkdir -p "$root_dir/dev" "$root_dir/sys"
+        su_run mount --rbind /dev "$root_dir/dev"
+        su_run mount --make-rslave "$root_dir/dev"
+        su_run mount --rbind /sys "$root_dir/sys"
+        su_run mount --make-rslave "$root_dir/sys"
+    else
+        cmd="$cmd; $(cat <<EOF
+mount -t tmpfs -o nosuid tmpfs "$root_dir/dev"
+mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
+mount -t tmpfs -o nosuid,nodev shm "$root_dir/dev/shm"
+mount -t devpts -o nosuid,noexec,gid=5,mode=620,ptmxmode=666,newinstance devpts "$root_dir/dev/pts"
+ln -snf pts/ptmx "$root_dir/dev/ptmx"
+mknod "$root_dir/dev/null" c 1 3
+mknod "$root_dir/dev/zero" c 1 5
+mknod "$root_dir/dev/console" c 5 1
+mknod "$root_dir/dev/tty" c 5 0
+mknod "$root_dir/dev/tty0" c 4 0
+mount -t sysfs sysfs "$root_dir/sys"
+EOF
+)"
     fi
 
-    cmd="$cmd && mount --rbind \"$this_runtime_dir\" \"$root_dir$runtime_dir\""
-
-    cmd="$cmd && $chroot $(get_userspec_arg) \"$root_dir\" $(get_command)"
+    cmd="$cmd; $(cat <<EOF
+mount --rbind "$this_runtime_dir" "$root_dir$runtime_dir"
+$chroot $(get_userspec_arg) "$root_dir" $(get_command)
+EOF
+)"
 
     su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd"
 }
