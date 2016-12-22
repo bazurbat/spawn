@@ -304,6 +304,23 @@ in_mkdir() {
     su_run install -o "$uid" -g "$gid" ${2:+"-m$2"} -d "$1" || die
 }
 
+get_lock_filename() {
+    local dir="$(dirname "$1")" name="$(basename "$1")"
+    echo "${dir}/.${program_name}-${name}.lock"
+}
+
+is_locked() {
+    test -f "$(get_lock_filename "$1")"
+}
+
+lock_dir() {
+    su_run touch "$(get_lock_filename "$1")"
+}
+
+unlock_dir() {
+    su_run rm -f "$(get_lock_filename "$1")"
+}
+
 get_userspec_arg() {
     local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
     echo "--userspec=$uid:$gid"
@@ -548,6 +565,10 @@ fix_mtab() {
 umount_all() {
     local IFS="$(printf '\n\t')" root= mp=
 
+    [ "$root_dir" ] || return 0
+
+    unlock_dir "$root_dir"
+
     if [ "$container_type" = 'chroot' ]; then
         root="$(realpath "$root_dir")"
         for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
@@ -596,7 +617,11 @@ cleanup() {
 }
 
 spawn_root_chroot() {
-    local IFS="$S" env= cmd=
+    local IFS="$S" env= cmd= sts=0
+
+    is_locked "$root_dir" &&
+        die "directory '$root_dir' is already in use by another spawn instance"
+    lock_dir "$root_dir"
 
     setup_env env
 
@@ -640,7 +665,11 @@ $chroot $(get_userspec_arg) "$root_dir" $(get_command)
 EOF
 )"
 
-    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd"
+    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd" || sts=$?
+
+    unlock_dir "$root_dir"
+
+    return $sts
 }
 
 spawn_root_nspawn() {
