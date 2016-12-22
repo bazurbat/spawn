@@ -345,6 +345,12 @@ main() {
         case $1 in
             -h|--help)
                 show_usage; exit 0 ;;
+            --init)
+                with_debootstrap=1
+                with_resolv=1 
+                with_locale=1
+                with_proxy=1
+                ;;
             --default)
                 with_debootstrap=1
                 with_resolv=1 
