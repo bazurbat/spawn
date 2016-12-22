@@ -606,6 +606,9 @@ cleanup() {
 
         su_run mountpoint -q "$root_dir/proc" && \
             su_run umount "$root_dir/proc" || true
+
+        su_run mountpoint -q "$root_dir/$container_home" && \
+            su_run umount "$root_dir/$container_home" || true
     fi
 
     if [ "$this_runtime_dir" ]; then
@@ -613,7 +616,6 @@ cleanup() {
             su_run umount -R "$this_runtime_dir" || true
         su_run rm -rf "$this_runtime_dir" || true
     fi
-
 }
 
 spawn_root_chroot() {
