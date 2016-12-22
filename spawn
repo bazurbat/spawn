@@ -656,6 +656,9 @@ mknod "$root_dir/dev/random" c 1 8
 mknod "$root_dir/dev/urandom" c 1 9
 mknod "$root_dir/dev/console" c 5 1
 mknod "$root_dir/dev/tty" c 5 0
+chmod 666 "$root_dir/dev/null" "$root_dir/dev/zero" "$root_dir/dev/random" \
+    "$root_dir/dev/urandom" "$root_dir/dev/tty"
+chmod 600 "$root_dir/dev/console"
 mount -t sysfs sysfs "$root_dir/sys"
 EOF
 )"
