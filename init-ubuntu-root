@@ -145,17 +145,21 @@ setup_proxy() {
 
     # NOTE: setting proxy for apt is needed to get it to work during the init
 
-    if [ "${http_proxy-}" -o "${https_proxy-}" ]; then
+    if [ "${http_proxy-}" -o "${https_proxy-}" -o "${ftp_proxy-}" ]; then
         : > "$profile_config"
 
-        if [ "$http_proxy" ]; then
+        if [ "${http_proxy-}" ]; then
             echo "export http_proxy=\"$http_proxy\"" >> "$profile_config"
             echo "Acquire::http::Proxy \"$http_proxy\";" > "$apt_config"
         fi
 
-        if [ "$https_proxy" ]; then
+        if [ "${https_proxy-}" ]; then
             echo "export https_proxy=\"$https_proxy\"" >> "$profile_config"
             echo "Acquire::http::Proxy \"$https_proxy\";" > "$apt_config"
+        fi
+
+        if [ "${ftp_proxy-}" ]; then
+            echo "export ftp_proxy=\"$ftp_proxy\"" >> "$profile_config"
         fi
 
         if [ "${no_proxy-}" ]; then
