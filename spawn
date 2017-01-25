@@ -47,6 +47,7 @@ OPTIONS:
   --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
+  --force               Break locks when entering chroot
 
 SYNOPSIS:
 
@@ -108,6 +109,8 @@ parse_command_line() {
                     container_type='nspawn' ;;
                 --using-chroot)
                     container_type='chroot' ;;
+                --force)
+                    use_force=1 ;;
                 -*)
                     passthrough_args="${passthrough_args}${S}$1" ;;
                 *)
@@ -717,6 +720,10 @@ container_home=$(find_user_info home)
 if [ "$container_name" ]; then
     spawn_root_docker
 elif [ "$root_dir" ]; then
+    if [ "${use_force:-}" ]; then
+        unlock_dir "$root_dir"
+    fi
+
     is_locked "$root_dir" &&
         die "directory '$root_dir' is already in use by another spawn instance"
     lock_dir "$root_dir"
