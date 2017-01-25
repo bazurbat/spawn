@@ -36,10 +36,10 @@ _init_ubuntu_root_complete() {
     local cur prev
     _get_comp_words_by_ref cur prev
 
-    local opts='--help --init --default --add-i386
+    local opts='--help --init --default --enable-backports --add-i386
 --install-java6 --install-java8-openjdk
 --install-wine --install-perforce --install-dev-tools
---skip-update --add-user'
+--add-user --skip-update'
 
     compopt -o dirnames
 

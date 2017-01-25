@@ -211,6 +211,10 @@ install_perforce()
     in_chroot apt-get -y --allow-unauthenticated install helix-cli
 }
 
+enable_backports() {
+    sed -ri "s/# (dev .*$codename-backports)/\1" "$root_dir/etc/apt/sources.list"
+}
+
 add_i386_arch() {
     in_chroot dpkg --add-architecture i386
 }
@@ -360,6 +364,8 @@ main() {
                 with_upgrade=1
                 with_user=1
                 ;;
+            --enable-backports)
+                enable_backports=1 ;;
             --add-i386)
                 with_i386=1; with_update=1 ;;
             --install-java6)
@@ -412,6 +418,10 @@ main() {
 
     if [ "${with_proxy-}" ]; then
         setup_proxy
+    fi
+
+    if [ "${enable_backports-}" ]; then
+        enable_backports
     fi
 
     if [ "${with_i386-}" ]; then
