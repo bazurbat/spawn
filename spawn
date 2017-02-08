@@ -47,7 +47,7 @@ OPTIONS:
   --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
-  --force               Break locks when entering chroot
+  --unlock              Remove locks for the specified root directory
 
 SYNOPSIS:
 
@@ -109,8 +109,8 @@ parse_command_line() {
                     container_type='nspawn' ;;
                 --using-chroot)
                     container_type='chroot' ;;
-                --force)
-                    use_force=1 ;;
+                --unlock)
+                    do_unlock=1 ;;
                 -*)
                     passthrough_args="${passthrough_args}${S}$1" ;;
                 *)
@@ -309,22 +309,22 @@ in_mkdir() {
 }
 
 get_lock_filename() {
-    local dir="$(dirname "$1")" name="$(basename "$1")"
-    echo "${dir}/.${program_name}.${name}.lock"
+    local dir="$(dirname "${1:?}")" name="$(basename "${1:?}")"
+    echo "${dir:?}/.${program_name}.${name:?}.lock"
     # the scheme used by systemd-nspawn
     # echo "${dir}/.#${name}.lck"
 }
 
 is_locked() {
-    test -f "$(get_lock_filename "$1")"
+    test -f "$(get_lock_filename "${1:?}")"
 }
 
 lock_dir() {
-    su_run touch "$(get_lock_filename "$1")"
+    su_run touch "$(get_lock_filename "${1:?}")"
 }
 
 unlock_dir() {
-    su_run rm -f "$(get_lock_filename "$1")"
+    su_run rm -f "$(get_lock_filename "${1:?}")"
 }
 
 get_userspec_arg() {
@@ -708,6 +708,13 @@ fi
 parse_command_line "$@"
 validate_environment
 
+if [ "${do_unlock-}" ]; then
+    if [ "$root_dir" ]; then
+        unlock_dir "$root_dir"
+    fi
+    exit
+fi
+
 if [ "${umount_all-}" ]; then
     umount_all
     exit
@@ -720,12 +727,10 @@ container_home=$(find_user_info home)
 if [ "$container_name" ]; then
     spawn_root_docker
 elif [ "$root_dir" ]; then
-    if [ "${use_force:-}" ]; then
-        unlock_dir "$root_dir"
+    if is_locked "$root_dir"; then
+        die "the directory '$root_dir' may be already in use by another spawn \
+instance, use '--unlock' option first to override"
     fi
-
-    is_locked "$root_dir" &&
-        die "directory '$root_dir' is already in use by another spawn instance"
     lock_dir "$root_dir"
 
     if [ "$container_type" = 'nspawn' ]; then
