@@ -114,13 +114,22 @@ parse_command_line() {
                 -*)
                     passthrough_args="${passthrough_args}${S}$1" ;;
                 *)
-                    if [ -d "$1" ]; then
-                        container_type="${container_type:-chroot}"
-                        root_dir="$1"
-                    else
-                        container_type="${container_type:-docker}"
-                        container_name="$1"
-                    fi
+                    case $container_type in
+                        chroot|nspawn)
+                            root_dir="$1" ;;
+                        docker)
+                            container_name="$1" ;;
+                        '')
+                            if [ -d "$1" ]; then
+                                container_type="chroot"
+                                root_dir="$1"
+                            elif docker_image_exists "$1"; then
+                                container_type="docker"
+                                container_name="$1"
+                            else
+                                die "could not find an existing directory or an image with the name '$1'"
+                            fi ;;
+                    esac
                     parsing_command=1
                     # allow optional '--' after the first non-option argument
                     [ "${2-}" = '--' ] && shift
@@ -132,9 +141,8 @@ parse_command_line() {
 }
 
 validate_environment() {
-    if [ -z "$container_type" ]; then
-        die "unable to determine container type from the arguments, probably \
-no name or directory was given or the specified directory does not exist"
+    if [ -z "$root_dir" ] && [ -z "$container_name" ]; then
+        die "root directory or image name to spawn is not specified"
     fi
 
     case $container_type in
@@ -142,7 +150,7 @@ no name or directory was given or the specified directory does not exist"
             [ "$root_dir" ] ||
                 die "root directory is not specified"
             [ -d "$root_dir" ] ||
-                die "root directory '$root_dir' is not exists"
+                die "the specified root directory '$root_dir' is not exists"
             [ -f "$root_dir/etc/passwd" ] ||
                 die "/etc/passwd is not exists in '$root_dir'"
             user_exists "$container_user" ||
@@ -151,6 +159,8 @@ no name or directory was given or the specified directory does not exist"
         docker)
             [ "$container_name" ] ||
                 die "container name is not specified"
+            docker_image_exists "$container_name" ||
+                die "the specified container image '$container_name' is not exists"
     esac
 
     case $container_type in
@@ -214,6 +224,10 @@ print_args() {
     printf "%d: " $#
     printf "<%s> " "$@"
     printf "\n"
+}
+
+docker_image_exists() {
+    docker images | grep -q "^\b${1:?}\b"
 }
 
 user_exists() {
