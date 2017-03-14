@@ -190,6 +190,13 @@ validate_environment() {
 
             ;;
     esac
+
+    case $container_type in
+        nspawn|docker)
+            if [ "${share_devices-}" ]; then
+                die "the '--share-devices' option is valid only for chroot mode"
+            fi ;;
+    esac
 }
 
 die() {
