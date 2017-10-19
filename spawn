@@ -760,7 +760,13 @@ instance, use '--unlock' option first to override"
         spawn_root_chroot || sts=$?
     fi
 
+    # to make sure the cleanup is finished before the dir is unlocked
+    trap - EXIT
+    cleanup
+
     unlock_dir "$root_dir"
+    sync
+
     exit $sts
 else
     die "container name or chroot directory is not specified"
