@@ -130,6 +130,7 @@ sed -ri 's/# (deb .*universe)/\1/' "$root_dir/etc/apt/sources.list"
 }
 
 inject_resolv_conf() {
+    rm -f "$root_dir/etc/resolv.conf"
     cp -L "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
 }
 
