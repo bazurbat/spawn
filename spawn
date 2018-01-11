@@ -623,42 +623,13 @@ umount_all() {
 }
 
 cleanup() {
-    # Checking for file existence requires appropriate file permissions too and
-    # files can reside inside the user's runtime dir which may not be
-    # accessible to normal user running the script.
+    local root= path=
 
     if [ "$root_dir" ]; then
-        if [ "$runtime_dir" ]; then
-            su_run mountpoint -q "$root_dir$runtime_dir" && \
-                su_run umount -R "$root_dir$runtime_dir" || true
-        fi
-
-        su_run mountpoint -q "$root_dir/etc/localtime" && \
-            su_run umount "$root_dir/etc/localtime" || true
-
-        su_run mountpoint -q "$root_dir/etc/resolv.conf" && \
-            su_run umount "$root_dir/etc/resolv.conf" || true
-
-        su_run mountpoint -q "$root_dir$xsock_dir" && \
-            su_run umount "$root_dir$xsock_dir" || true
-
-        su_run mountpoint -q "$root_dir/dev" && \
-            su_run umount -R "$root_dir/dev" || true
-
-        su_run mountpoint -q "$root_dir/dev/shm" && \
-            su_run umount "$root_dir/dev/shm" || true
-
-        su_run mountpoint -q "$root_dir/dev/pts" && \
-            su_run umount "$root_dir/dev/pts" || true
-
-        su_run mountpoint -q "$root_dir/sys" && \
-            su_run umount -R "$root_dir/sys" || true
-
-        su_run mountpoint -q "$root_dir/proc" && \
-            su_run umount "$root_dir/proc" || true
-
-        su_run mountpoint -q "$root_dir/$container_home" && \
-            su_run umount "$root_dir/$container_home" || true
+        root=$(realpath "$root_dir")
+        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
+            su_run umount "$path"
+        done
     fi
 
     if [ "$this_runtime_dir" ]; then
