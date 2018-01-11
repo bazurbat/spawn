@@ -438,6 +438,16 @@ setup_runtime_env() {
 setup_system_env() {
     local SYS_A=
 
+    case $container_type in
+        chroot)
+            su_run touch "$root_dir/etc/resolv.conf"
+            su_run mount --bind "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
+            ;;
+        *)
+            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf")"
+            ;;
+    esac
+
     if [ -f /etc/localtime ]; then
         case $container_type in
             chroot)
@@ -625,6 +635,9 @@ cleanup() {
 
         su_run mountpoint -q "$root_dir/etc/localtime" && \
             su_run umount "$root_dir/etc/localtime" || true
+
+        su_run mountpoint -q "$root_dir/etc/resolv.conf" && \
+            su_run umount "$root_dir/etc/resolv.conf" || true
 
         su_run mountpoint -q "$root_dir$xsock_dir" && \
             su_run umount "$root_dir$xsock_dir" || true
