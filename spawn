@@ -717,7 +717,7 @@ $chroot $(get_userspec_arg) "$root_dir" $(get_command)
 EOF
 )"
 
-    su_run $(make_setarch) env - $env unshare -m /bin/sh -c "$cmd"
+    su_run $(make_setarch) env - $env unshare -mpf /bin/sh -c "$cmd"
 }
 
 spawn_root_nspawn() {
