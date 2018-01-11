@@ -18,6 +18,7 @@ OPTIONS
 
   -h|--help                Show help
   --default                Run default setup
+  --dev                    Setup for development
   --add-i386               Add i386 arch
   --install-java6          Install Oracle JDK 6
   --install-java8-openjdk  Install Open JDK 8
@@ -290,7 +291,7 @@ install_dev_tools() {
         zip
 
     if [ "${with_i386-}" ]; then
-        apt-get -y install \
+        in_chroot apt-get -y install \
             zlib1g-dev:i386
     fi
 
@@ -361,6 +362,17 @@ main() {
                 with_resolv=1 
                 with_locale=1
                 with_proxy=1
+                with_update=1
+                with_upgrade=1
+                with_user=1
+                ;;
+            --dev)
+                with_debootstrap=1
+                with_resolv=1 
+                with_locale=1
+                with_proxy=1
+                with_i386=1
+                with_dev_tools=1
                 with_update=1
                 with_upgrade=1
                 with_user=1
