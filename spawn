@@ -596,18 +596,6 @@ extract_xauth() {
     xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | su_run xauth -f "$1" nmerge -
 }
 
-copy_resolv_conf() {
-    su_run cp -L /etc/resolv.conf "$root_dir/etc/resolv.conf" ||
-        die "failed to copy resolv.conf"
-}
-
-fix_mtab() {
-    if [ ! -h "$root_dir/etc/mtab" ]; then
-        su_run ln -sf /proc/self/mounts "$root_dir/etc/mtab" ||
-            die "failed to link mtab"
-    fi
-}
-
 umount_all() {
     local IFS="$(printf '\n\t')" root= mp=
 
@@ -734,7 +722,7 @@ spawn_root_nspawn() {
 }
 
 spawn_root_docker() {
-    local IFS="$S" A=
+    local IFS="$S" A= cmd=
 
     trap cleanup EXIT
 
