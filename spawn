@@ -220,11 +220,11 @@ su_run() {
 
 escape_quote() {
     local arg= result=
-    for arg in "$@"; do
+    for arg; do
         arg=$(printf "%s" "$arg" | sed "s/'/'\\\''/g")
         result="$result${S}'$arg'"
     done
-    echo "$result"
+    printf '%s' "$result"
 }
 
 print_args() {
@@ -304,12 +304,13 @@ get_pa_socket() {
 }
 
 get_command() {
+    local IFS="$S"
     case $container_type in
         chroot)
             if [ "$container_command" ]; then
                 echo "$(escape_quote $container_command)"
             else
-                echo "/bin/sh${S}-c${S}'cd && exec /bin/bash -l'"
+                echo "/bin/sh -c 'cd && exec /bin/bash -l'"
             fi ;;
         nspawn)
             if [ "$container_command" ]; then
