@@ -435,6 +435,24 @@ setup_runtime_env() {
     eval "${1}=\"\$${1}$S$_A\""
 }
 
+setup_system_env() {
+    local SYS_A=
+
+    if [ -f /etc/localtime ]; then
+        case $container_type in
+            chroot)
+                su_run touch "$root_dir/etc/localtime"
+                su_run mount --bind "/etc/localtime" "$root_dir/etc/localtime"
+                ;;
+            *)
+                SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime:/etc/localtime")"
+                ;;
+        esac
+    fi
+
+    eval "${1}=\"\$${1}$S$SYS_A\""
+}
+
 setup_ssh_env() {
     local SSH_A= uid=
 
@@ -564,6 +582,7 @@ setup_home_env() {
 setup_env() {
     add_user_arg      "$1"
     setup_runtime_env "$1"
+    setup_system_env  "$1"
     setup_ssh_env     "$1"
     setup_x11_env     "$1"
     setup_pa_env      "$1"
@@ -615,6 +634,9 @@ cleanup() {
             su_run mountpoint -q "$root_dir$runtime_dir" && \
                 su_run umount -R "$root_dir$runtime_dir" || true
         fi
+
+        su_run mountpoint -q "$root_dir/etc/localtime" && \
+            su_run umount "$root_dir/etc/localtime" || true
 
         su_run mountpoint -q "$root_dir$xsock_dir" && \
             su_run umount "$root_dir$xsock_dir" || true
