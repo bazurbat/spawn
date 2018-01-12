@@ -444,8 +444,8 @@ setup_system_env() {
             su_run touch "$root_dir/etc/resolv.conf"
             su_run mount --bind "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
             ;;
-        *)
-            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf")"
+        nspawn)
+            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf:/etc/resolv.conf")"
             ;;
     esac
 
@@ -455,7 +455,7 @@ setup_system_env() {
                 su_run touch "$root_dir/etc/localtime"
                 su_run mount --bind "/etc/localtime" "$root_dir/etc/localtime"
                 ;;
-            *)
+            nspawn)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime:/etc/localtime")"
                 ;;
         esac
