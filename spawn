@@ -44,11 +44,10 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --to-stderr           Redirect all container command output to stderr
-  --umount-all          Release all mount points for the root directory
   --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
-  --unlock              Remove locks for the specified root directory
+  --cleanup             Release mounts and unlock the root directory
 
 SYNOPSIS:
 
@@ -102,8 +101,6 @@ parse_command_line() {
                     with_pulseaudio=1 ;;
                 --to-stderr)
                     to_stderr=1 ;;
-                --umount-all)
-                    umount_all=1 ;;
                 --share-devices)
                     share_devices=1 ;;
                 --using-docker)
@@ -112,8 +109,8 @@ parse_command_line() {
                     container_type='nspawn' ;;
                 --using-chroot)
                     container_type='chroot' ;;
-                --unlock)
-                    do_unlock=1 ;;
+                --cleanup)
+                    do_cleanup=1 ;;
                 -*)
                     passthrough_args="${passthrough_args}${S}$1" ;;
                 *)
@@ -610,24 +607,9 @@ extract_xauth() {
     xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | su_run xauth -f "$1" nmerge -
 }
 
-umount_all() {
-    local IFS="$(printf '\n\t')" root= mp=
-
-    [ "$root_dir" ] || return 0
-
-    unlock_dir "$root_dir"
-
-    if [ "$container_type" = 'chroot' ]; then
-        root="$(realpath "$root_dir")"
-        for mp in $(awk -v i="$root" '$2~i {print $2}' /proc/mounts | tac)
-        do
-            su_run umount "$mp" || true
-        done
-    fi
-}
-
 cleanup() {
     local root= path=
+    set +eu
 
     if [ "$root_dir" ]; then
         root=$(realpath "$root_dir")
@@ -638,8 +620,8 @@ cleanup() {
 
     if [ "$this_runtime_dir" ]; then
         su_run mountpoint -q "$this_runtime_dir" && \
-            su_run umount -R "$this_runtime_dir" || true
-        su_run rm -rf "$this_runtime_dir" || true
+            su_run umount -R "$this_runtime_dir"
+        su_run rm -rf "$this_runtime_dir"
     fi
 
     if [ "$root_dir" ]; then
@@ -740,15 +722,8 @@ fi
 parse_command_line "$@"
 validate_environment
 
-if [ "${do_unlock-}" ]; then
-    if [ "$root_dir" ]; then
-        unlock_dir "$root_dir"
-    fi
-    exit
-fi
-
-if [ "${umount_all-}" ]; then
-    umount_all
+if [ "${do_cleanup-}" ]; then
+    cleanup
     exit
 fi
 
@@ -761,7 +736,7 @@ if [ "$container_name" ]; then
 elif [ "$root_dir" ]; then
     if is_locked "$root_dir"; then
         die "the directory '$root_dir' is locked by another spawn instance, \
-use '--unlock' option to remove stale locks"
+use '--cleanup' option to remove stale locks"
     fi
     lock_dir "$root_dir"
 
