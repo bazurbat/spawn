@@ -641,6 +641,11 @@ cleanup() {
             su_run umount -R "$this_runtime_dir" || true
         su_run rm -rf "$this_runtime_dir" || true
     fi
+
+    if [ "$root_dir" ]; then
+        unlock_dir "$root_dir"
+        sync
+    fi
 }
 
 spawn_root_chroot() {
@@ -755,25 +760,16 @@ if [ "$container_name" ]; then
     spawn_root_docker
 elif [ "$root_dir" ]; then
     if is_locked "$root_dir"; then
-        die "the directory '$root_dir' may be already in use by another spawn \
-instance, use '--unlock' option first to override"
+        die "the directory '$root_dir' is locked by another spawn instance, \
+use '--unlock' option to remove stale locks"
     fi
     lock_dir "$root_dir"
 
     if [ "$container_type" = 'nspawn' ]; then
-        spawn_root_nspawn || sts=$?
+        spawn_root_nspawn
     else
-        spawn_root_chroot || sts=$?
+        spawn_root_chroot
     fi
-
-    # to make sure the cleanup is finished before the dir is unlocked
-    trap - EXIT
-    cleanup
-
-    unlock_dir "$root_dir"
-    sync
-
-    exit $sts
 else
     die "container name or chroot directory is not specified"
 fi
