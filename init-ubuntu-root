@@ -174,7 +174,7 @@ setup_proxy() {
 add_webupda8team_ppa() {
     echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu $codename main" \
         > "$root_dir/etc/apt/sources.list.d/webupd8team-java.list"
-    in_chroot apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EEA14886
+    in_chroot apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys EEA14886
     echo "debconf shared/accepted-oracle-license-v1-1 select true" \
         | in_chroot debconf-set-selections
     echo "debconf shared/accepted-oracle-license-v1-1 seen true" \
@@ -194,7 +194,7 @@ add_wine_ppa() {
     echo "deb http://ppa.launchpad.net/ubuntu-wine/ppa/ubuntu $codename main" \
         > "$root_dir/etc/apt/sources.list.d/ubuntu-wine.list"
 
-    in_chroot apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F9CB8DB0
+    in_chroot apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys F9CB8DB0
 }
 
 install_wine()
