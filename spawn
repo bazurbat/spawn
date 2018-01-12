@@ -707,13 +707,17 @@ spawn_root_nspawn() {
 }
 
 spawn_root_docker() {
-    local IFS="$S" A= cmd=
+    local IFS="$S" A= it_arg=
 
     trap cleanup EXIT
 
     setup_env A
 
-    docker run --rm -it $A $passthrough_args $container_name $(get_command)
+    if [ -z "$container_command" ]; then
+        it_arg='-it'
+    fi
+
+    docker run --rm $it_arg $A $passthrough_args $container_name $container_command
 }
 
 if [ $# = 0 ]; then
