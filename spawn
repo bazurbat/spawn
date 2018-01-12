@@ -43,6 +43,7 @@ OPTIONS:
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
+  --to-stderr           Redirect all container command output to stderr
   --umount-all          Release all mount points for the root directory
   --share-devices       Share devices with the host when chrooting
   --using-docker        Run command in a new Docker container
@@ -99,6 +100,8 @@ parse_command_line() {
                     with_x11=1 ;;
                 --with-pulseaudio)
                     with_pulseaudio=1 ;;
+                --to-stderr)
+                    to_stderr=1 ;;
                 --umount-all)
                     umount_all=1 ;;
                 --share-devices)
@@ -713,7 +716,11 @@ spawn_root_docker() {
 
     setup_env A
 
-    if [ -z "$container_command" ]; then
+    if [ "$container_command" ]; then
+        if [ "${to_stderr-}" ]; then
+            exec 1>&2
+        fi
+    else
         it_arg='-it'
     fi
 

@@ -7,7 +7,7 @@ _spawn_complete() {
     local opts='--help --as-root
 --arch --bind-home
 --with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
---umount-all --share-devices
+--to-stderr --umount-all --share-devices
 --using-docker --using-nspawn --using-chroot
 --unlock'
 
