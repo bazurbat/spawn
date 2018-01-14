@@ -625,25 +625,19 @@ extract_xauth() {
 }
 
 cleanup() {
-    local root= path= mounts=
-    set +eu
-
-    # Cache a list of mounts before doing anything. There is an elusive bug
-    # when the directories do not unmount because awk process does not match
-    # anything. I suspect this might be due to the list of mounts changing
-    # underneath while the awk reads it. This might be a plausible workaround.
-    mounts=$(cat /proc/mounts)
+    local root= path=
+    unset IFS; set +eu
 
     if [ "$root_dir" ]; then
         root=$(escape_mounts "$(realpath "$root_dir")")
-        for path in $(echo "$mounts" | awk -v r="^$root" '$2~r {print $2}' | sort -r); do
+        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
         done
     fi
 
     if [ "$this_runtime_dir" ]; then
         root=$(escape_mounts "$(realpath "$this_runtime_dir")")
-        for path in $(echo "$mounts" | awk -v r="^$root" '$2~r {print $2}' | sort -r); do
+        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
         done
         su_run rm -rf "$this_runtime_dir"
