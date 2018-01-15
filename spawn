@@ -22,7 +22,6 @@ bind_home=
 chroot=
 sts=0
 
-my_runtime_dir=
 runtime_dir=
 
 xsock_dir='/tmp/.X11-unix'
@@ -431,10 +430,7 @@ setup_runtime_env() {
     config_dir=$(get_config_dir); : ${config_dir:?}
 
     my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
-    : ${my_runtime_dir:?}
-    runtime_dir=$(get_runtime_dir); : ${runtime_dir:?}
-
-    su_run mount -t tmpfs -o uid=$uid,gid=$gid,mode=700 tmpfs "$my_runtime_dir"
+    runtime_dir=$(get_runtime_dir); : ${runtime_dir:?} ${my_runtime_dir:?}
 
     case $container_type in
         chroot)
@@ -649,7 +645,7 @@ cleanup() {
         done
     fi
 
-    if [ "$my_runtime_dir" ]; then
+    if [ "${my_runtime_dir-}" ]; then
         root=$(escape_mounts "$(realpath "$my_runtime_dir")")
         for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
