@@ -37,6 +37,7 @@ OPTIONS:
 
   -h|--help             Print this help message
   -r|--as-root          Use superuser inside the spawned root
+  -n|--dry-run          Do not run the command, only print it
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
@@ -87,6 +88,7 @@ parse_command_line() {
                 -h|--help) show_usage; exit ;;
                 -r|--as-root)
                     container_user='root' ;;
+                -n|--dry-run) dry_run=1 ;;
                 -u|--user)
                     container_user="$2"; shift ;;
                 --arch)
@@ -711,7 +713,7 @@ $chroot $(get_userspec_arg) "$root_dir" $(get_command)
 EOF
 )"
 
-    su_run $(make_setarch) env - $env unshare -mpf /bin/sh -c "$cmd"
+    ${dry_run:+echo} su_run $(make_setarch) env - $env unshare -mpf /bin/sh -c "$cmd"
 }
 
 spawn_root_nspawn() {
@@ -724,7 +726,7 @@ spawn_root_nspawn() {
 
     setup_env A
 
-    su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- $(get_command)
+    ${dry_run:+echo} su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- $(get_command)
 }
 
 spawn_root_docker() {
@@ -742,7 +744,7 @@ spawn_root_docker() {
         it_arg='-it'
     fi
 
-    docker run --rm $it_arg $A $passthrough_args $container_name $container_command
+    ${dry_run:+echo} docker run --rm $it_arg $A $passthrough_args $container_name $container_command
 }
 
 if [ $# = 0 ]; then
@@ -751,7 +753,7 @@ if [ $# = 0 ]; then
 fi
 
 parse_command_line "$@"
-validate_environment
+# validate_environment
 
 if [ "${do_cleanup-}" ]; then
     cleanup
