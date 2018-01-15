@@ -22,7 +22,7 @@ bind_home=
 chroot=
 sts=0
 
-this_runtime_dir=
+my_runtime_dir=
 runtime_dir=
 
 xsock_dir='/tmp/.X11-unix'
@@ -430,11 +430,11 @@ setup_runtime_env() {
 
     config_dir=$(get_config_dir); : ${config_dir:?}
 
-    this_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
-    : ${this_runtime_dir:?}
+    my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
+    : ${my_runtime_dir:?}
     runtime_dir=$(get_runtime_dir); : ${runtime_dir:?}
 
-    su_run mount -t tmpfs -o uid=$uid,gid=$gid,mode=700 tmpfs "$this_runtime_dir"
+    su_run mount -t tmpfs -o uid=$uid,gid=$gid,mode=700 tmpfs "$my_runtime_dir"
 
     case $container_type in
         chroot)
@@ -452,7 +452,7 @@ setup_runtime_env() {
             in_mkdir "$root_dir$runtime_dir"
             ;;
         *)
-            _A="$_A$S$(make_bind_arg $this_runtime_dir:$runtime_dir)"
+            _A="$_A$S$(make_bind_arg $my_runtime_dir:$runtime_dir)"
             ;;
 
     esac
@@ -511,8 +511,8 @@ setup_ssh_env() {
 
     case $container_type in
         chroot)
-            su_run touch "$this_runtime_dir/ssh"
-            su_run mount --bind "$SSH_AUTH_SOCK" "$this_runtime_dir/ssh"
+            su_run touch "$my_runtime_dir/ssh"
+            su_run mount --bind "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
             ;;
         *)
             SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$runtime_dir/ssh")"
@@ -539,7 +539,7 @@ setup_x11_env() {
     [ -d "$xsock_dir" ] ||
         die "X11 socket directory '$xsock_dir' is not exists"
 
-    xauth_file="$this_runtime_dir/Xauthority"
+    xauth_file="$my_runtime_dir/Xauthority"
     su_run touch "$xauth_file"
     extract_xauth "$xauth_file"
     su_run chmod 666 "$xauth_file"
@@ -581,16 +581,16 @@ setup_pa_env() {
     cookie_file=$(get_my_config_dir pulse)/cookie
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
-    su_run cp "$cookie_file" "$this_runtime_dir/pulse_cookie"
-    su_run chmod 666 "$this_runtime_dir/pulse_cookie"
+    su_run cp "$cookie_file" "$my_runtime_dir/pulse_cookie"
+    su_run chmod 666 "$my_runtime_dir/pulse_cookie"
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$runtime_dir/pulse_sock")"
     PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$runtime_dir/pulse_cookie")"
 
     case $container_type in
         chroot)
-            su_run touch "$this_runtime_dir/pulse_sock"
-            su_run mount --bind "$sock_file" "$this_runtime_dir/pulse_sock"
+            su_run touch "$my_runtime_dir/pulse_sock"
+            su_run mount --bind "$sock_file" "$my_runtime_dir/pulse_sock"
             ;;
         *)
             PA_A="$PA_A$S$(make_bind_arg "$sock_file:$runtime_dir/pulse_sock")"
@@ -649,12 +649,12 @@ cleanup() {
         done
     fi
 
-    if [ "$this_runtime_dir" ]; then
-        root=$(escape_mounts "$(realpath "$this_runtime_dir")")
+    if [ "$my_runtime_dir" ]; then
+        root=$(escape_mounts "$(realpath "$my_runtime_dir")")
         for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
         done
-        su_run rm -rf "$this_runtime_dir"
+        su_run rm -rf "$my_runtime_dir"
     fi
 
     if [ "$root_dir" ]; then
@@ -708,7 +708,7 @@ EOF
     fi
 
     cmd="$cmd; $(cat <<EOF
-mount --rbind "$this_runtime_dir" "$root_dir$runtime_dir"
+mount --rbind "$my_runtime_dir" "$root_dir$runtime_dir"
 $chroot $(get_userspec_arg) "$root_dir" $(get_command)
 EOF
 )"
