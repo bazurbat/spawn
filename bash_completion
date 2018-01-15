@@ -4,7 +4,7 @@ _spawn_complete() {
     local cur prev
     _get_comp_words_by_ref cur prev
 
-    local opts='--help --as-root
+    local opts='--help --as-root --dry-run
 --arch --bind-home
 --with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
 --to-stderr --share-devices
