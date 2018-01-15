@@ -121,13 +121,23 @@ parse_command_line() {
                             container_name="$1" ;;
                         '')
                             if [ -d "$1" ]; then
-                                container_type="chroot"
+                                if [ "$(command -v systemd-nspawn)" ]; then
+                                    container_type="nspawn"
+                                else
+                                    container_type="chroot"
+                                fi
                                 root_dir="$1"
-                            elif docker_image_exists "$1"; then
-                                container_type="docker"
-                                container_name="$1"
                             else
-                                die "could not find an existing directory or an image with the name '$1'"
+                                if [ "$(command -v docker)" ]; then
+                                    if docker_image_exists "$1"; then
+                                        container_type="docker"
+                                        container_name="$1"
+                                    else
+                                        die "could not find a docker image '$1'"
+                                    fi
+                                else
+                                    die "the directory '$1' does not exist and Docker is not installed"
+                                fi
                             fi ;;
                     esac
                     parsing_command=1
@@ -159,6 +169,8 @@ validate_environment() {
         docker)
             [ "$container_name" ] ||
                 die "container name is not specified"
+            [ "$(command -v docker)" ] ||
+                die "docker command was not found"
             docker_image_exists "$container_name" ||
                 die "the specified container image '$container_name' is not exists"
     esac
