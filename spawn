@@ -217,7 +217,7 @@ warn() {
 }
 
 su_run() {
-    if [ "${UID:?}" = "0" ]; then
+    if [ "${euid:?}" = "0" ]; then
         $E "$@"
     else
         $E sudo "$@"
@@ -313,7 +313,7 @@ get_config_dir() {
 }
 
 get_my_runtime_dir() {
-    echo "${XDG_RUNTIME_DIR:-/run/user/${UID:?}}${1:+/$1}"
+    echo "${XDG_RUNTIME_DIR:-/run/user/${euid:?}}${1:+/$1}"
 }
 
 get_runtime_dir() {
@@ -516,10 +516,10 @@ setup_ssh_env() {
             ;;
     esac
 
-    if [ "${UID:?}" != "$uid" ]; then
-        warn "current UID ($UID) does not match UID inside the container \
-($uid) but SSH agent socket sharing is requested -- changing $SSH_AUTH_SOCK \
-mode to world writeable/readable (666)"
+    if [ "${euid:?}" != "$uid" ]; then
+        warn "the current effective user ID ($euid) does not match the user \
+ID inside the container ($uid) but SSH agent socket sharing is requested -- \
+changing $SSH_AUTH_SOCK mode to world writeable/readable (666)"
         chmod 666 "$SSH_AUTH_SOCK"
     fi
 
@@ -752,6 +752,8 @@ if [ $# = 0 ]; then
     show_usage
     exit
 fi
+
+euid=${UID:-$(id -u)}
 
 parse_command_line "$@"
 validate_environment
