@@ -520,7 +520,7 @@ setup_ssh_env() {
         warn "current UID ($UID) does not match UID inside the container \
 ($uid) but SSH agent socket sharing is requested -- changing $SSH_AUTH_SOCK \
 mode to world writeable/readable (666)"
-        su_run chmod 666 "$SSH_AUTH_SOCK"
+        chmod 666 "$SSH_AUTH_SOCK"
     fi
 
     eval "${1}=\"\$${1}$S$SSH_A\""
@@ -537,9 +537,9 @@ setup_x11_env() {
         die "X11 socket directory '$xsock_dir' is not exists"
 
     xauth_file="$my_runtime_dir/Xauthority"
-    su_run touch "$xauth_file"
+    touch "$xauth_file"
     extract_xauth "$xauth_file"
-    su_run chmod 666 "$xauth_file"
+    chmod 666 "$xauth_file"
 
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
     X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$runtime_dir/Xauthority")"
@@ -578,8 +578,8 @@ setup_pa_env() {
     cookie_file=$(get_my_config_dir pulse)/cookie
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
-    su_run cp "$cookie_file" "$my_runtime_dir/pulse_cookie"
-    su_run chmod 666 "$my_runtime_dir/pulse_cookie"
+    cp "$cookie_file" "$my_runtime_dir/pulse_cookie"
+    chmod 666 "$my_runtime_dir/pulse_cookie"
 
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$runtime_dir/pulse_sock")"
     PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$runtime_dir/pulse_cookie")"
@@ -632,7 +632,7 @@ extract_xauth() {
     # Use wildcard authentication family because hostname of container can
     # differ from the host and default Xauthority files are hostname specific.
     # See http://stackoverflow.com/a/25280523 for details.
-    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | su_run xauth -f "$1" nmerge -
+    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
 }
 
 cleanup() {
@@ -651,7 +651,7 @@ cleanup() {
         for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
         done
-        su_run rm -rf "$my_runtime_dir"
+        rm -rf "$my_runtime_dir"
     fi
 
     if [ "$root_dir" ]; then
@@ -750,7 +750,7 @@ if [ $# = 0 ]; then
 fi
 
 parse_command_line "$@"
-# validate_environment
+validate_environment
 
 if [ "${do_cleanup-}" ]; then
     cleanup
