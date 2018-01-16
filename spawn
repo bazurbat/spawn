@@ -516,8 +516,10 @@ setup_ssh_env() {
             ;;
     esac
 
-    if [ "${UID:?}" != "$uid" ]; then
-        warn "current UID ($UID) does not match UID inside the container \
+    local current_uid=${UID:-$(id -u)}
+
+    if [ "${current_uid:?}" != "$uid" ]; then
+        warn "current UID ($current_uid) does not match UID inside the container \
 ($uid) but SSH agent socket sharing is requested -- changing $SSH_AUTH_SOCK \
 mode to world writeable/readable (666)"
         chmod 666 "$SSH_AUTH_SOCK"
