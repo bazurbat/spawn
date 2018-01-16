@@ -7,25 +7,11 @@ program_name="spawn"
 S=$(printf '\t')
 E=
 
-root_dir=
-container_type=
-container_name=
-container_user="dev"
-container_home=
-container_command=
-passthrough_args=
-
-root_arch=
-with_ssh_agent=
-with_pulseaudio=
-with_x11=
-bind_home=
-chroot=
-sts=0
-
-runtime_dir=
-
+spawn_user='dev'
 xsock_dir='/tmp/.X11-unix'
+
+# saving the stderr to allow showing error messages from subshells
+exec 3>&2
 
 show_usage() {
     cat <<EOF
@@ -64,35 +50,35 @@ SYNOPSIS:
 
 NOTE:
 
-  If you get "Connection failure: Protocol error" error when trying to run
-  PulseAudio applications inside the chroot, you need to disable communication
-  through shared memory for the client. Add:
+  If you get "Connection failure: Protocol error" error or silent audio when
+  trying to run PulseAudio applications inside the chroot, you need to disable
+  communication through shared memory for the client. Add:
 
     enable-shm = no
 
-  to "/etc/pulse/client.conf" inside the root-dir.
+  to "/etc/pulse/client.conf" inside the root directory.
 
 EOF
 }
 
 parse_command_line() {
-    local parsing_command= eoa=
+    local parsing_command= eoa= is_dir=
 
     while [ $# -gt 0 ]; do
         if [ "$parsing_command" ]; then
-            container_command="${container_command}${S}${1}"
+            spawn_command="${spawn_command-}${S}${1}"
         else
             case $1 in
                 --)
                     parsing_command=1 ;;
                 -h|--help) show_usage; exit ;;
                 -r|--as-root)
-                    container_user='root' ;;
+                    spawn_user='root' ;;
                 -n|--dry-run) E=echo ;;
                 -u|--user)
-                    container_user="$2"; shift ;;
+                    spawn_user="$2"; shift ;;
                 --arch)
-                    root_arch="$2"; shift ;;
+                    spawn_arch="$2"; shift ;;
                 --bind-home)
                     bind_home="$2"; shift ;;
                 --with-ssh-agent)
@@ -106,39 +92,42 @@ parse_command_line() {
                 --share-devices)
                     share_devices=1 ;;
                 --using-docker)
-                    container_type='docker' ;;
+                    spawn_type='docker' ;;
                 --using-nspawn)
-                    container_type='nspawn' ;;
+                    spawn_type='nspawn' ;;
                 --using-chroot)
-                    container_type='chroot' ;;
+                    spawn_type='chroot' ;;
                 --cleanup)
                     do_cleanup=1 ;;
                 -*)
-                    passthrough_args="${passthrough_args}${S}$1" ;;
+                    spawn_args="${spawn_args}${S}$1" ;;
                 *)
-                    case $container_type in
+                    case ${spawn_type-} in
                         chroot|nspawn)
                             root_dir="$1" ;;
                         docker)
-                            container_name="$1" ;;
+                            spawn_name="$1" ;;
                         '')
                             if [ -d "$1" ]; then
                                 if [ "$(command -v systemd-nspawn)" ]; then
-                                    container_type="nspawn"
+                                    spawn_type="nspawn"
                                 else
-                                    container_type="chroot"
+                                    spawn_type="chroot"
                                 fi
                                 root_dir="$1"
                             else
+                                [ "$1" = "${1#*/}" ] || \
+                                    die "the directory '$1' does not exist"
                                 if [ "$(command -v docker)" ]; then
                                     if docker_image_exists "$1"; then
-                                        container_type="docker"
-                                        container_name="$1"
+                                        spawn_type="docker"
+                                        spawn_name="$1"
                                     else
-                                        die "could not find a docker image '$1'"
+                                        die "the container '$1' does not exist"
                                     fi
                                 else
-                                    die "the directory '$1' does not exist and Docker is not installed"
+                                    die "the name '$1' is not a directory and \
+unable to check if it is a container because Docker was not found"
                                 fi
                             fi ;;
                     esac
@@ -150,34 +139,37 @@ parse_command_line() {
         fi
         shift
     done
+
+    spawn_args="${spawn_args:+${spawn_args#$S}}"
+    spawn_command="${spawn_command:+${spawn_command#$S}}"
 }
 
 validate_environment() {
-    if [ -z "$root_dir" ] && [ -z "$container_name" ]; then
+    if [ -z "${root_dir-}" ] && [ -z "${spawn_name-}" ]; then
         die "root directory or image name to spawn is not specified"
     fi
 
-    case $container_type in
+    case $spawn_type in
         chroot|nspawn)
-            [ "$root_dir" ] ||
+            [ "${root_dir-}" ] ||
                 die "root directory is not specified"
             [ -d "$root_dir" ] ||
                 die "the specified root directory '$root_dir' is not exists"
             [ -f "$root_dir/etc/passwd" ] ||
                 die "/etc/passwd is not exists in '$root_dir'"
-            user_exists "$container_user" ||
-                die "the specified user '$container_user' is not found in '$root_dir'"
+            user_exists "$spawn_user" ||
+                die "the specified user '$spawn_user' is not found in '$root_dir'"
             ;;
         docker)
-            [ "$container_name" ] ||
+            [ "${spawn_name-}" ] ||
                 die "container name is not specified"
             [ "$(command -v docker)" ] ||
                 die "docker command was not found"
-            docker_image_exists "$container_name" ||
-                die "the specified container image '$container_name' is not exists"
+            docker_image_exists "$spawn_name" ||
+                die "the specified container image '$spawn_name' is not exists"
     esac
 
-    case $container_type in
+    case $spawn_type in
         nspawn)
             [ "$(command -v systemd-nspawn)" ] ||
                 die "systemd-nspawn command was not found"
@@ -205,7 +197,7 @@ validate_environment() {
             ;;
     esac
 
-    case $container_type in
+    case $spawn_type in
         nspawn|docker)
             if [ "${share_devices-}" ]; then
                 die "the '--share-devices' option is valid only for chroot mode"
@@ -214,10 +206,10 @@ validate_environment() {
 }
 
 die() {
-    local status=$?
-    [ $status = 0 ] && status=2
-    [ $# = 0 ] || echo Error: $*
-    exit $status
+    local sts=$?
+    [ $sts = 0 ] && sts=2
+    [ $# = 0 ] || echo Error: $* >&3
+    exit $sts
 }
 
 warn() {
@@ -225,7 +217,7 @@ warn() {
 }
 
 su_run() {
-    if [ "${UID-}" = "0" ]; then
+    if [ "${UID:?}" = "0" ]; then
         $E "$@"
     else
         $E sudo "$@"
@@ -258,13 +250,8 @@ unescape_mounts() {
                            -e 's/\\134/\o134/g'
 }
 
-print_args() {
-    printf "%d: " $#
-    printf "<%s> " "$@"
-    printf "\n"
-}
-
 docker_image_exists() {
+    [ "$(command -v docker)" ] || return
     docker images | grep -q "^\b${1:?}\b"
 }
 
@@ -274,16 +261,16 @@ user_exists() {
 
 find_user_info() {
     local field="$1"
-    if [ "$root_dir" ]; then
+    if [ "${root_dir-}" ]; then
         [ -f "$root_dir/etc/passwd" ] || return
         while IFS=: read -r user pass uid gid gecos home shell; do
-            if [ "$user" = "$container_user" ]; then
+            if [ "$user" = "$spawn_user" ]; then
                 eval "echo \$$field"
                 break
             fi
         done < "$root_dir/etc/passwd"
     else
-        case $container_user in
+        case $spawn_user in
             root)
                 case $field in
                      user) echo root ;;
@@ -292,13 +279,22 @@ find_user_info() {
                      home) echo /root ;;
                     shell) echo /bin/bash ;;
                 esac ;;
-            *)
+            dev)
                 case $field in
-                     user) echo $container_user ;;
+                     user) echo $spawn_user ;;
                       uid) echo 1000 ;;
                       gid) echo 100  ;;
-                     home) echo /home/$container_user ;;
+                     home) echo /home/$spawn_user ;;
                     shell) echo /bin/bash ;;
+                esac ;;
+            *)
+                case $field in
+                     user) echo $spawn_user ;;
+                     home) echo /home/$spawn_user ;;
+                    shell) echo /bin/bash ;;
+                        *) die "unable to find the value of '$field' for \
+the specified user '$spawn_user', the feature is not supported for Docker \
+containers"
                 esac ;;
         esac
     fi
@@ -309,8 +305,9 @@ get_my_config_dir() {
 }
 
 get_config_dir() {
-    local home_dir="$(find_user_info home)"
-    local config_dir="${home_dir:?}/.config"
+    local home_dir= config_dir=
+    home_dir=$(find_user_info home)
+    config_dir="${home_dir:?}/.config"
 
     echo "$config_dir${1:+/$1}"
 }
@@ -320,8 +317,9 @@ get_my_runtime_dir() {
 }
 
 get_runtime_dir() {
-    local uid="$(find_user_info uid)"
-    local runtime_dir="/run/user/${uid:?}"
+    local uid= runtime_dir=
+    uid=$(find_user_info uid)
+    runtime_dir="/run/user/${uid:?}"
 
     echo "$runtime_dir${1:+/$1}"
 }
@@ -336,34 +334,33 @@ get_pa_socket() {
 
 get_command() {
     local IFS="$S"
-    case $container_type in
+    case $spawn_type in
         chroot)
-            if [ "$container_command" ]; then
-                echo "$(escape_quote $container_command)"
+            if [ "$spawn_command" ]; then
+                echo "$(escape_quote $spawn_command)"
             else
                 echo "/bin/sh -c 'cd && exec /bin/bash -l'"
             fi ;;
         nspawn)
-            if [ "$container_command" ]; then
-                echo "$container_command"
+            if [ "$spawn_command" ]; then
+                echo "$spawn_command"
             else
                 echo "/bin/sh${S}-c${S}cd && exec /bin/bash -l"
             fi ;;
         docker)
-            if [ "$container_command" ]; then
-                echo "$container_command"
-            fi ;;
+            echo "${spawn_command-}" ;;
     esac
 }
 
-in_mkdir() {
-    local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
-    su_run install -o "$uid" -g "$gid" ${2:+"-m$2"} -d "$1" || die
+root_mkdir() {
+    local uid= gid=
+    uid=$(find_user_info uid); gid=$(find_user_info gid)
+    su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${root_dir:?}${1:?}"
 }
 
 get_lock_filename() {
     local dir="$(dirname "${1:?}")" name="$(basename "${1:?}")"
-    echo "${dir:?}/.${program_name}.${name:?}.lock"
+    echo "${dir:?}/.${program_name:?}.${name:?}.lock"
     # the scheme used by systemd-nspawn
     # echo "${dir}/.#${name}.lck"
 }
@@ -381,14 +378,16 @@ unlock_dir() {
 }
 
 get_userspec_arg() {
-    local uid="$(find_user_info uid)" gid="$(find_user_info gid)"
-    echo "--userspec=$uid:$gid"
+    local uid= gid=
+    uid=$(find_user_info uid); gid=$(find_user_info gid)
+    echo "--userspec=${uid:?}:${gid:?}"
 }
 
 add_user_arg() {
-    local _A= uid="$(find_user_info uid)"
+    local _A= uid=
+    uid=$(find_user_info uid)
 
-    case $container_type in
+    case $spawn_type in
         nspawn|docker)
             _A="--user=$uid" ;;
     esac
@@ -397,17 +396,19 @@ add_user_arg() {
 }
 
 make_setarch() {
-    case $root_arch in
+    case ${spawn_arch-} in
         x86|i?86)
             echo "linux32" ;;
         x86-64|x86_64|amd64)
             echo "linux64" ;;
+        '') ;;
+         *) die "unknown arch '$spawn_arch'" ;;
     esac
 }
 
 make_env_arg() {
     local value="$1"
-    case $container_type in
+    case $spawn_type in
         chroot) echo "$value" ;;
         nspawn) echo "--setenv=$value" ;;
         docker) echo "--env=$value" ;;
@@ -416,7 +417,7 @@ make_env_arg() {
 
 make_bind_arg() {
     local value="$1"
-    case $container_type in
+    case $spawn_type in
         nspawn) echo "--bind=$value" ;;
         docker) echo "--volume=$value" ;;
     esac
@@ -425,28 +426,27 @@ make_bind_arg() {
 setup_runtime_env() {
     local _A= uid= gid= config_dir=
 
-    uid=$(find_user_info uid); : ${uid:?}
-    gid=$(find_user_info gid); : ${gid:?}
-
-    config_dir=$(get_config_dir); : ${config_dir:?}
+    uid=$(find_user_info uid)
+    gid=$(find_user_info gid)
+    config_dir=$(get_config_dir)
 
     my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
-    runtime_dir=$(get_runtime_dir); : ${runtime_dir:?} ${my_runtime_dir:?}
+    runtime_dir=$(get_runtime_dir)
 
-    case $container_type in
+    case $spawn_type in
         chroot)
-            _A="$_A$S$(make_env_arg TERM=$TERM)"
-            _A="$_A$S$(make_env_arg HOME=$container_home)"
-            _A="$_A$S$(make_env_arg USER=$container_user)"
-            _A="$_A$S$(make_env_arg LOGNAME=$container_user)"
+            _A="$_A$S$(make_env_arg TERM=${TERM-})"
+            _A="$_A$S$(make_env_arg HOME=$spawn_home)"
+            _A="$_A$S$(make_env_arg USER=$spawn_user)"
+            _A="$_A$S$(make_env_arg LOGNAME=$spawn_user)"
 
-            if [ "$container_user" = "root" ]; then
+            if [ "$spawn_user" = "root" ]; then
                 _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
             else
                 _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
             fi
 
-            in_mkdir "$root_dir$runtime_dir"
+            root_mkdir "$runtime_dir"
             ;;
         *)
             _A="$_A$S$(make_bind_arg $my_runtime_dir:$runtime_dir)"
@@ -454,11 +454,11 @@ setup_runtime_env() {
 
     esac
 
-    _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
     _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
+    _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
 
-    if [ "$root_dir" ]; then
-        in_mkdir "$root_dir/$config_dir"
+    if [ "${root_dir-}" ]; then
+        root_mkdir "$config_dir"
     fi
 
     eval "${1}=\"\$${1}$S$_A\""
@@ -467,7 +467,7 @@ setup_runtime_env() {
 setup_system_env() {
     local SYS_A=
 
-    case $container_type in
+    case $spawn_type in
         chroot)
             su_run touch "$root_dir/etc/resolv.conf"
             su_run mount --bind "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
@@ -478,7 +478,7 @@ setup_system_env() {
     esac
 
     if [ -f /etc/localtime ]; then
-        case $container_type in
+        case $spawn_type in
             chroot)
                 su_run touch "$root_dir/etc/localtime"
                 su_run mount --bind "/etc/localtime" "$root_dir/etc/localtime"
@@ -502,11 +502,11 @@ setup_ssh_env() {
     [ -S "$SSH_AUTH_SOCK" ] ||
         die "$SSH_AUTH_SOCK socket is not exists or is not a socket"
 
-    uid=$(find_user_info uid); : ${uid:?}
+    uid=$(find_user_info uid)
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$runtime_dir/ssh")"
 
-    case $container_type in
+    case $spawn_type in
         chroot)
             su_run touch "$my_runtime_dir/ssh"
             su_run mount --bind "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
@@ -516,7 +516,7 @@ setup_ssh_env() {
             ;;
     esac
 
-    if [ "$UID" != "$uid" ]; then
+    if [ "${UID:?}" != "$uid" ]; then
         warn "current UID ($UID) does not match UID inside the container \
 ($uid) but SSH agent socket sharing is requested -- changing $SSH_AUTH_SOCK \
 mode to world writeable/readable (666)"
@@ -550,7 +550,7 @@ setup_x11_env() {
     # Exposing whole X11 socket directory is probably a bad idea, hopefully
     # assuming that most users are running single X11 instance.
 
-    case $container_type in
+    case $spawn_type in
         chroot)
             su_run mkdir -p "$root_dir$xsock_dir"
             su_run mount --bind "$xsock_dir" "$root_dir$xsock_dir"
@@ -584,7 +584,7 @@ setup_pa_env() {
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$runtime_dir/pulse_sock")"
     PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$runtime_dir/pulse_cookie")"
 
-    case $container_type in
+    case $spawn_type in
         chroot)
             su_run touch "$my_runtime_dir/pulse_sock"
             su_run mount --bind "$sock_file" "$my_runtime_dir/pulse_sock"
@@ -600,20 +600,23 @@ setup_pa_env() {
 setup_home_env() {
     local HOME_A=
 
-    [ "$bind_home" ] || return 0
+    [ "${bind_home-}" ] || return 0
 
     [ -d "$bind_home" ] ||
-        die "The directory '$bind_home' is not exists"
+        die "the bind directory '$bind_home' is not exists"
 
-    if [ "$root_dir" ]; then
-        in_mkdir "$root_dir/$container_home"
+    if [ "${root_dir-}" ]; then
+        root_mkdir "$spawn_home"
     fi
 
-    if [ "$container_type" = "chroot" ]; then
-        su_run mount --bind "$bind_home" "$root_dir/$container_home"
-    else
-        HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$container_home")"
-    fi
+    case $spawn_type in
+        chroot)
+            su_run mount --bind "$bind_home" "$root_dir$spawn_home"
+            ;;
+        *)
+            HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$spawn_home")"
+            ;;
+    esac
 
     eval "${1}=\"\$${1}$S$HOME_A\""
 }
@@ -639,7 +642,7 @@ cleanup() {
     local root= path=
     unset IFS; set +eu
 
-    if [ "$root_dir" ]; then
+    if [ "${root_dir-}" ]; then
         root=$(escape_mounts "$(realpath "$root_dir")")
         for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
@@ -654,22 +657,23 @@ cleanup() {
         rm -rf "$my_runtime_dir"
     fi
 
-    if [ "$root_dir" ]; then
+    if [ "${root_dir-}" ]; then
         unlock_dir "$root_dir"
         sync
     fi
 }
 
 spawn_root_chroot() {
-    local IFS="$S" env= cmd=
+    local IFS="$S" arch= env= cmd=
 
     trap cleanup EXIT
 
+    arch=$(make_setarch)
     setup_env env
 
     cmd=$(cat <<EOF
 set -e
-mount -t proc proc "${root_dir}/proc"
+mount -t proc proc "$root_dir/proc"
 EOF
 )
 
@@ -710,7 +714,7 @@ $chroot $(get_userspec_arg) "$root_dir" $(get_command)
 EOF
 )"
 
-    $E su_run $(make_setarch) env - $env unshare -mpf /bin/sh -c "$cmd"
+    $E su_run $arch env - $env unshare -mpf /bin/sh -c "$cmd"
 }
 
 spawn_root_nspawn() {
@@ -723,7 +727,7 @@ spawn_root_nspawn() {
 
     setup_env A
 
-    $E su_run systemd-nspawn $A $passthrough_args -D "$root_dir" -- $(get_command)
+    $E su_run systemd-nspawn $A ${spawn_args-} -D "$root_dir" -- $(get_command)
 }
 
 spawn_root_docker() {
@@ -733,7 +737,7 @@ spawn_root_docker() {
 
     setup_env A
 
-    if [ "$container_command" ]; then
+    if [ "${spawn_command-}" ]; then
         if [ "${to_stderr-}" ]; then
             exec 1>&2
         fi
@@ -741,7 +745,7 @@ spawn_root_docker() {
         it_arg='-it'
     fi
 
-    $E docker run --rm $it_arg $A $passthrough_args $container_name $container_command
+    $E docker run --rm $it_arg $A ${spawn_args-} $spawn_name $(get_command)
 }
 
 if [ $# = 0 ]; then
@@ -757,20 +761,20 @@ if [ "${do_cleanup-}" ]; then
     exit
 fi
 
-container_home=$(find_user_info home)
-[ "$container_home" ] ||
+spawn_home=$(find_user_info home)
+[ "$spawn_home" ] ||
     die "failed to find user's home directory"
 
-if [ "$container_name" ]; then
+if [ "${spawn_name-}" ]; then
     spawn_root_docker
-elif [ "$root_dir" ]; then
+elif [ "${root_dir-}" ]; then
     if is_locked "$root_dir"; then
         die "the directory '$root_dir' is locked by another spawn instance, \
 use '--cleanup' option to remove stale locks"
     fi
     lock_dir "$root_dir"
 
-    if [ "$container_type" = 'nspawn' ]; then
+    if [ "$spawn_type" = 'nspawn' ]; then
         spawn_root_nspawn
     else
         spawn_root_chroot
