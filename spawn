@@ -31,7 +31,7 @@ OPTIONS:
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --to-stderr           Redirect all container command output to stderr
-  --share-devices       Share devices with the host when chrooting
+  --share-devices       Share devices with the host
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
   --cleanup             Release mounts and unlock the root directory
@@ -198,9 +198,9 @@ validate_environment() {
     esac
 
     case $spawn_type in
-        nspawn|docker)
+        nspawn)
             if [ "${share_devices-}" ]; then
-                die "the '--share-devices' option is valid only for chroot mode"
+                die "the '--share-devices' option is not supported for nspawn"
             fi ;;
     esac
 }
@@ -745,7 +745,8 @@ spawn_root_docker() {
         it_arg='-it'
     fi
 
-    $E docker run --rm $it_arg $A ${spawn_args-} $spawn_name $(get_command)
+    $E docker run --rm $it_arg ${share_devices:+--privileged} \
+        $A ${spawn_args-} $spawn_name $(get_command)
 }
 
 if [ $# = 0 ]; then
