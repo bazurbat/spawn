@@ -644,7 +644,7 @@ cleanup() {
 
     if [ "${root_dir-}" ]; then
         root=$(escape_mounts "$(realpath "$root_dir")")
-        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
+        for path in $(awk -v r="^$root/" '$2~r {print $2}' /proc/mounts | sort -r); do
             su_run umount "$(unescape_mounts "$path")"
         done
     fi
