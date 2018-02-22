@@ -642,11 +642,13 @@ cleanup() {
     local root= path=
     unset IFS; set +eu
 
-    if [ "${root_dir-}" ]; then
-        root=$(escape_mounts "$(realpath "$root_dir")")
-        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
-            su_run umount "$(unescape_mounts "$path")"
-        done
+    if [ "$do_cleanup" = "1" ]; then
+        if [ "${root_dir-}" ]; then
+            root=$(escape_mounts "$(realpath "$root_dir")")
+            for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
+                su_run umount "$(unescape_mounts "$path")"
+            done
+        fi
     fi
 
     if [ "${my_runtime_dir-}" ]; then
