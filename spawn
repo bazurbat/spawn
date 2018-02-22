@@ -8,6 +8,7 @@ S=$(printf '\t')
 E=
 
 spawn_user='dev'
+spawn_args=''
 xsock_dir='/tmp/.X11-unix'
 
 # saving the stderr to allow showing error messages from subshells
