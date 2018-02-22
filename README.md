@@ -25,16 +25,18 @@ OPTIONS:
 
   -h|--help             Print this help message
   -r|--as-root          Use superuser inside the spawned root
+  -n|--dry-run          Do not run any privileged commands - only print them
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --umount-all          Release all mount points for the root directory
-  --share-devices       Share devices with the host when chrooting
+  --to-stderr           Redirect all container command output to stderr
+  --share-devices       Share devices with the host
   --using-docker        Run command in a new Docker container
   --using-chroot        Change the root directory using chroot
+  --cleanup             Release mounts and unlock the root directory
 
 SYNOPSIS:
 
@@ -50,11 +52,11 @@ SYNOPSIS:
 
 NOTE:
 
-  If you get "Connection failure: Protocol error" error when trying to run
-  PulseAudio applications inside the chroot, you need to disable communication
-  through shared memory for the client. Add:
+  If you get "Connection failure: Protocol error" error or silent audio when
+  trying to run PulseAudio applications inside the chroot, you need to disable
+  communication through shared memory for the client. Add:
 
     enable-shm = no
 
-  to "/etc/pulse/client.conf" inside the root-dir.
+  to "/etc/pulse/client.conf" inside the root directory.
 ```
