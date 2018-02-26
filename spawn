@@ -101,7 +101,7 @@ parse_command_line() {
                 --cleanup)
                     do_cleanup=1 ;;
                 -*)
-                    spawn_args="${spawn_args}${S}$1" ;;
+                    spawn_args="${spawn_args-}${S}$1" ;;
                 *)
                     case ${spawn_type-} in
                         chroot|nspawn)
