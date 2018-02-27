@@ -233,23 +233,6 @@ escape_quote() {
     printf '%s' "$result"
 }
 
-escape_mounts() {
-    # See getmntent(3) for details. This many backslashes are needed to escape
-    # it from shell as well as awk when passing the value.
-    printf '%s' "$1" | sed -e 's/\o040/\\040/g' \
-                           -e 's/\o011/\\011/g' \
-                           -e 's/\o012/\\012/g' \
-                           -e 's/\\/\\\\\\\\/g'
-}
-
-unescape_mounts() {
-    # see getmntent(3) for details
-    printf '%s' "$1" | sed -e 's/\\040/\o040/g' \
-                           -e 's/\\011/\o011/g' \
-                           -e 's/\\012/\o012/g' \
-                           -e 's/\\134/\o134/g'
-}
-
 docker_image_exists() {
     [ "$(command -v docker)" ] || return
     docker images | grep -q "^\b${1:?}\b"
@@ -356,6 +339,13 @@ root_mkdir() {
     local uid= gid=
     uid=$(find_user_info uid); gid=$(find_user_info gid)
     su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${root_dir:?}${1:?}"
+}
+
+try_umount() {
+    local path="${1:?}" arg="$2"
+    if su_run mountpoint -q "$path"; then
+        su_run umount -v $arg "$path"
+    fi
 }
 
 get_lock_filename() {
@@ -644,18 +634,18 @@ cleanup() {
 
     if [ "$do_cleanup" = "1" ]; then
         if [ "${root_dir-}" ]; then
-            root=$(escape_mounts "$(realpath "$root_dir")")
-            for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
-                su_run umount "$(unescape_mounts "$path")"
-            done
+            try_umount "$root_dir/sys" -R
+            try_umount "$root_dir/dev" -R
+            [ "${spawn_home-}" ] && try_umount "$root_dir$spawn_home"
+            [ "${xsock_dir-}"  ] && try_umount "$root_dir$xsock_dir"
+            try_umount "$root_dir/etc/localtime"
+            try_umount "$root_dir/etc/resolv.conf"
         fi
     fi
 
     if [ "${my_runtime_dir-}" ]; then
-        root=$(escape_mounts "$(realpath "$my_runtime_dir")")
-        for path in $(awk -v r="^$root" '$2~r {print $2}' /proc/mounts | sort -r); do
-            su_run umount "$(unescape_mounts "$path")"
-        done
+        try_umount "$my_runtime_dir/pulse_sock"
+        try_umount "$my_runtime_dir/ssh"
         rm -rf "$my_runtime_dir"
     fi
 
