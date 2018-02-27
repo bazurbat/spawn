@@ -9,6 +9,7 @@ E=
 
 spawn_user='dev'
 xsock_dir='/tmp/.X11-unix'
+mountpoints=
 
 # saving the stderr to allow showing error messages from subshells
 exec 3>&2
@@ -32,21 +33,36 @@ OPTIONS:
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --to-stderr           Redirect all container command output to stderr
   --share-devices       Share devices with the host
-  --using-docker        Run command in a new Docker container
-  --using-chroot        Change the root directory using chroot
-  --cleanup             Release mounts and unlock the root directory
+  --using-docker        Use Docker to spawn the named container
+  --using-nspawn        Use 'systemd-nspawn' to chroot
+  --using-chroot        Use the regular 'chroot'
+  --unlock              Remove the lock file
+  --cleanup             Release stale mount points and unlock
+  --runtime-dir <dir>   Set runtime dir
 
 SYNOPSIS:
 
   Unknown options before <name|directory> are passed to the selected launcher
   as arguments (docker run, chroot, etc.). Everything else after
-  <name|directory> and optional '--' are considered the command to be invoked
+  <name|directory> and optional '--' is considered the command to be invoked
   inside the spawned container or chroot.
 
-  Options starting with '--using' are mutually exclusive -- only the last one
-  will have an effect. If none was given and the first non option argument
-  specifies an existing directory then chroot will be assumed, otherwise the
-  name will be passed to 'docker run'.
+  If no '--using-*' option was given and the first non-option argument is an
+  existing directory then 'nspawn' will be used if 'systemd-nspawn' was found
+  in PATH, otherwise 'chroot'. If the argument is not a directory it is assumed
+  to be the name of a Docker container.
+
+  Use the '--unlock' option to remove stale lock files from the root directory
+  after an unexpected system shutdown, for example.
+
+  The '--cleanup' option can be used to unmount the directories left by other
+  spawn invocations. Use the '--runtime-dir' option to explicitly set the
+  runtime directory (\$XDG_RUNTIME_DIR/spawn.*). This is used for
+  troubleshooting the script itself and should not be necessary under normal
+  circumstances.
+
+  If either '--unlock' or '--cleanup' is specified all other options are
+  ignored, the script exits immediately after the cleanup.
 
 NOTE:
 
@@ -97,8 +113,12 @@ parse_command_line() {
                     spawn_type='nspawn' ;;
                 --using-chroot)
                     spawn_type='chroot' ;;
+                --unlock)
+                    do_unlock=1 ;;
                 --cleanup)
                     do_cleanup=1 ;;
+                --runtime-dir)
+                    my_runtime_dir=$2; shift ;;
                 -*)
                     spawn_args="${spawn_args-}${S}$1" ;;
                 *)
@@ -341,10 +361,31 @@ root_mkdir() {
     su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${root_dir:?}${1:?}"
 }
 
+add_mountpoints() {
+    for arg; do
+        mountpoints="${arg}${S}${mountpoints}"
+    done
+}
+
+bind_mount() {
+    su_run mount --bind "${1:?}" "${2:?}"
+    add_mountpoints "$2"
+}
+
+bind_file() {
+    su_run touch "${2:?}"
+    bind_mount "$1" "$2"
+}
+
+bind_dir() {
+    su_run mkdir -p "${2:?}"
+    bind_mount "$1" "$2"
+}
+
 try_umount() {
-    local path="${1:?}" arg="$2"
+    local path="${1:?}" arg="${2-}"
     if su_run mountpoint -q "$path"; then
-        su_run umount -v $arg "$path"
+        su_run umount $arg "$path" || true
     fi
 }
 
@@ -420,7 +461,9 @@ setup_runtime_env() {
     gid=$(find_user_info gid)
     config_dir=$(get_config_dir)
 
-    my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
+    if [ -z "${my_runtime_dir-}" ]; then
+        my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
+    fi
     runtime_dir=$(get_runtime_dir)
 
     case $spawn_type in
@@ -459,8 +502,7 @@ setup_system_env() {
 
     case $spawn_type in
         chroot)
-            su_run touch "$root_dir/etc/resolv.conf"
-            su_run mount --bind "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
+            bind_file "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
             ;;
         nspawn)
             SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf:/etc/resolv.conf")"
@@ -470,8 +512,7 @@ setup_system_env() {
     if [ -f /etc/localtime ]; then
         case $spawn_type in
             chroot)
-                su_run touch "$root_dir/etc/localtime"
-                su_run mount --bind "/etc/localtime" "$root_dir/etc/localtime"
+                bind_file "/etc/localtime" "$root_dir/etc/localtime"
                 ;;
             nspawn)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime:/etc/localtime")"
@@ -498,8 +539,7 @@ setup_ssh_env() {
 
     case $spawn_type in
         chroot)
-            su_run touch "$my_runtime_dir/ssh"
-            su_run mount --bind "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
+            bind_file "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
             ;;
         *)
             SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$runtime_dir/ssh")"
@@ -542,8 +582,7 @@ setup_x11_env() {
 
     case $spawn_type in
         chroot)
-            su_run mkdir -p "$root_dir$xsock_dir"
-            su_run mount --bind "$xsock_dir" "$root_dir$xsock_dir"
+            bind_dir "$xsock_dir" "$root_dir$xsock_dir"
             ;;
         *)
             X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
@@ -576,8 +615,7 @@ setup_pa_env() {
 
     case $spawn_type in
         chroot)
-            su_run touch "$my_runtime_dir/pulse_sock"
-            su_run mount --bind "$sock_file" "$my_runtime_dir/pulse_sock"
+            bind_file "$sock_file" "$my_runtime_dir/pulse_sock"
             ;;
         *)
             PA_A="$PA_A$S$(make_bind_arg "$sock_file:$runtime_dir/pulse_sock")"
@@ -601,7 +639,7 @@ setup_home_env() {
 
     case $spawn_type in
         chroot)
-            su_run mount --bind "$bind_home" "$root_dir$spawn_home"
+            bind_dir "$bind_home" "$root_dir$spawn_home"
             ;;
         *)
             HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$spawn_home")"
@@ -628,31 +666,40 @@ extract_xauth() {
     xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
 }
 
-cleanup() {
-    local root= path=
-    unset IFS; set +eu
-
-    if [ "$do_cleanup" = "1" ]; then
-        if [ "${root_dir-}" ]; then
-            try_umount "$root_dir/sys" -R
-            try_umount "$root_dir/dev" -R
-            [ "${spawn_home-}" ] && try_umount "$root_dir$spawn_home"
-            [ "${xsock_dir-}"  ] && try_umount "$root_dir$xsock_dir"
-            try_umount "$root_dir/etc/localtime"
-            try_umount "$root_dir/etc/resolv.conf"
-        fi
+unlock() {
+    if [ "${root_dir-}" ]; then
+        unlock_dir "$root_dir"
+        sync
     fi
+}
 
+umount_all() {
+    if [ "${root_dir-}" ]; then
+        try_umount "$root_dir/sys" -R
+        try_umount "$root_dir/dev" -R
+        [ "${spawn_home-}" ] && try_umount "$root_dir$spawn_home"
+        [ "${xsock_dir-}"  ] && try_umount "$root_dir$xsock_dir"
+        try_umount "$root_dir/etc/localtime"
+        try_umount "$root_dir/etc/resolv.conf"
+    fi
     if [ "${my_runtime_dir-}" ]; then
         try_umount "$my_runtime_dir/pulse_sock"
         try_umount "$my_runtime_dir/ssh"
         rm -rf "$my_runtime_dir"
     fi
+}
 
-    if [ "${root_dir-}" ]; then
-        unlock_dir "$root_dir"
-        sync
+cleanup() {
+    local IFS="$S"
+
+    for path in $mountpoints; do
+        su_run umount -R "$path" || true
+    done
+    if [ "${my_runtime_dir-}" ]; then
+        rm -rf "$my_runtime_dir"
     fi
+
+    unlock
 }
 
 spawn_root_chroot() {
@@ -675,6 +722,7 @@ EOF
         su_run mount --make-rslave "$root_dir/dev"
         su_run mount --rbind /sys "$root_dir/sys"
         su_run mount --make-rslave "$root_dir/sys"
+        add_mountpoints "$root_dir/dev" "$root_dir/sys"
     else
         cmd="$cmd; $(cat <<EOF
 mount -t tmpfs -o nosuid tmpfs "$root_dir/dev"
@@ -751,14 +799,16 @@ euid=${UID:-$(id -u)}
 parse_command_line "$@"
 validate_environment
 
-if [ "${do_cleanup-}" ]; then
-    cleanup
-    exit
-fi
-
 spawn_home=$(find_user_info home)
 [ "$spawn_home" ] ||
     die "failed to find user's home directory"
+
+if [ "${do_unlock-}" ]; then
+    unlock; exit
+fi
+if [ "${do_cleanup-}" ]; then
+    umount_all; unlock; exit
+fi
 
 if [ "${spawn_name-}" ]; then
     spawn_root_docker

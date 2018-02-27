@@ -9,7 +9,7 @@ _spawn_complete() {
 --with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
 --to-stderr --share-devices
 --using-docker --using-nspawn --using-chroot
---cleanup'
+--unlock --cleanup --runtime-dir'
 
     compopt -o dirnames
 

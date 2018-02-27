@@ -34,21 +34,36 @@ OPTIONS:
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
   --to-stderr           Redirect all container command output to stderr
   --share-devices       Share devices with the host
-  --using-docker        Run command in a new Docker container
-  --using-chroot        Change the root directory using chroot
-  --cleanup             Release mounts and unlock the root directory
+  --using-docker        Use Docker to spawn the named container
+  --using-nspawn        Use 'systemd-nspawn' to chroot
+  --using-chroot        Use the regular 'chroot'
+  --unlock              Remove the lock file
+  --cleanup             Release stale mount points and unlock
+  --runtime-dir <dir>   Set runtime dir
 
 SYNOPSIS:
 
   Unknown options before <name|directory> are passed to the selected launcher
   as arguments (docker run, chroot, etc.). Everything else after
-  <name|directory> and optional '--' are considered the command to be invoked
+  <name|directory> and optional '--' is considered the command to be invoked
   inside the spawned container or chroot.
 
-  Options starting with '--using' are mutually exclusive -- only the last one
-  will have an effect. If none was given and the first non option argument
-  specifies an existing directory then chroot will be assumed, otherwise the
-  name will be passed to 'docker run'.
+  If no '--using-*' option was given and the first non-option argument is an
+  existing directory then 'nspawn' will be used if 'systemd-nspawn' was found
+  in PATH, otherwise 'chroot'. If the argument is not a directory it is assumed
+  to be the name of a Docker container.
+
+  Use the '--unlock' option to remove stale lock files from the root directory
+  after an unexpected system shutdown, for example.
+
+  The '--cleanup' option can be used to unmount the directories left by other
+  spawn invocations. Use the '--runtime-dir' option to explicitly set the
+  runtime directory (\$XDG_RUNTIME_DIR/spawn.*). This is used for
+  troubleshooting the script itself and should not be necessary under normal
+  circumstances.
+
+  If either '--unlock' or '--cleanup' is specified all other options are
+  ignored, the script exits immediately after the cleanup.
 
 NOTE:
 
@@ -59,4 +74,5 @@ NOTE:
     enable-shm = no
 
   to "/etc/pulse/client.conf" inside the root directory.
+
 ```
