@@ -28,6 +28,7 @@ OPTIONS:
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as user home directory
+  --bind-dir <dir>      Mount the specified directory inside the root
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
   --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
@@ -97,6 +98,8 @@ parse_command_line() {
                     spawn_arch="$2"; shift ;;
                 --bind-home)
                     bind_home="$2"; shift ;;
+                --bind-dir)
+                    bind_dir="$2"; shift ;;
                 --with-ssh-agent)
                     with_ssh_agent=1 ;;
                 --with-x11)
@@ -649,6 +652,33 @@ setup_home_env() {
     eval "${1}=\"\$${1}$S$HOME_A\""
 }
 
+setup_bind_env() {
+    local IFS oldIFS="$IFS" OUT_A="$1" BIND_A= from to
+
+    [ "${bind_dir-}" ] || return 0
+
+    IFS=:
+    set -- $bind_dir
+    IFS="$oldIFS"
+    from="$1"
+    if [ -z "${2-}" ]; then
+        to="${from}"
+    else
+        to="$2"
+    fi
+
+    case $spawn_type in
+        chroot)
+            bind_dir "$from" "$root_dir$to"
+            ;;
+        *)
+            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir")"
+            ;;
+    esac
+
+    eval "${OUT_A}=\"\$${OUT_A}$S$BIND_A\""
+}
+
 setup_env() {
     add_user_arg      "$1"
     setup_runtime_env "$1"
@@ -657,6 +687,7 @@ setup_env() {
     setup_x11_env     "$1"
     setup_pa_env      "$1"
     setup_home_env    "$1"
+    setup_bind_env    "$1"
 }
 
 extract_xauth() {

@@ -5,7 +5,7 @@ _spawn_complete() {
     _get_comp_words_by_ref cur prev
 
     local opts='--help --as-root --dry-run
---arch --bind-home
+--arch --bind-home --bind-dir
 --with-ssh-agent --with-gpg-agent --with-x11 --with-pulseaudio
 --to-stderr --share-devices
 --using-docker --using-nspawn --using-chroot
