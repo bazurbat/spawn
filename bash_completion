@@ -37,7 +37,7 @@ _init_ubuntu_root_complete() {
     _get_comp_words_by_ref cur prev
 
     local opts='--help --init --default --enable-backports --add-i386
---install-java6 --install-java8-openjdk
+--install-java8-openjdk
 --install-wine --install-perforce --install-dev-tools
 --add-user --skip-update'
 

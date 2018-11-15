@@ -170,22 +170,6 @@ setup_proxy() {
     fi
 }
 
-# oracle java installer
-add_webupda8team_ppa() {
-    echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu $codename main" \
-        > "$root_dir/etc/apt/sources.list.d/webupd8team-java.list"
-    in_chroot apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys EEA14886
-    echo "debconf shared/accepted-oracle-license-v1-1 select true" \
-        | in_chroot debconf-set-selections
-    echo "debconf shared/accepted-oracle-license-v1-1 seen true" \
-        | in_chroot debconf-set-selections
-}
-
-install_java6() {
-    in_chroot apt-get -y --no-install-recommends install oracle-java6-installer
-    in_chroot rm -rf /var/cache/oracle-jdk6-installer
-}
-
 install_java8_openjdk() {
     in_chroot apt-get -y install openjdk-8-jdk
 }
@@ -381,8 +365,6 @@ main() {
                 enable_backports=1 ;;
             --add-i386)
                 with_i386=1; with_update=1 ;;
-            --install-java6)
-                with_java6=1; with_update=1 ;;
             --install-java8-openjdk)
                 with_java8_openjdk=1; with_update=1 ;;
             --install-wine)
@@ -441,10 +423,6 @@ main() {
         add_i386_arch
     fi
 
-    if [ "${with_java6-}" ]; then
-        add_webupda8team_ppa
-    fi
-
     if [ "${with_wine-}" ]; then
         add_wine_ppa
     fi
@@ -459,10 +437,6 @@ main() {
 
     if [ "${with_upgrade-}" ]; then
         upgrade_dist
-    fi
-
-    if [ "${with_java6-}" ]; then
-        install_java6
     fi
 
     if [ "${with_java8_openjdk-}" ]; then
