@@ -72,7 +72,7 @@ in_chroot() {
     PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
     LC_ALL=C.UTF-8 \
     DEBIAN_FRONTEND=noninteractive \
-    chroot "$root_dir" "$@"
+    chroot "$root_dir" sh -c "mount -t proc proc /proc; $*; umount /proc"
 }
 
 get_codename() {
