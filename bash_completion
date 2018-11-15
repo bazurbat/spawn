@@ -36,9 +36,9 @@ _init_ubuntu_root_complete() {
     local cur prev
     _get_comp_words_by_ref cur prev
 
-    local opts='--help --init --default --enable-backports --add-i386
---install-java8-openjdk
---install-wine --install-perforce --install-dev-tools
+    local opts='--help --init --default --dev \
+--with-backports --with-i386 --with-dev-tools \
+--with-java8 --with-wine --with-perforce \
 --add-user --skip-update'
 
     compopt -o dirnames

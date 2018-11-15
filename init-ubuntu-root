@@ -17,14 +17,15 @@ Usage: $program_name [OPTION...] <root-dir>
 OPTIONS
 
   -h|--help                Show help
-  --default                Run default setup
-  --dev                    Setup for development
-  --add-i386               Add i386 arch
-  --install-java6          Install Oracle JDK 6
-  --install-java8-openjdk  Install Open JDK 8
-  --install-wine           Install Wine
-  --install-perforce       Install Perforce
-  --install-dev-tools      Install development tools
+  --init                   Minimal init
+  --default                Default init
+  --dev                    Development environment init
+  --with-backports         Enable backports APT source
+  --with-i386              Add i386 arch
+  --with-dev-tools         Install development tools
+  --with-java8             Install Open JDK 8
+  --with-wine              Install Wine
+  --with-perforce          Install Perforce
   --skip-update            Do not run 'apt-get update' before install
   --add-user               Add dev user
 
@@ -170,7 +171,7 @@ setup_proxy() {
     fi
 }
 
-install_java8_openjdk() {
+install_java8() {
     in_chroot apt-get -y install openjdk-8-jdk
 }
 
@@ -325,6 +326,25 @@ EOF
     chmod 0640 "$sudoers_file"
 }
 
+bulk_enable_init() {
+    with_debootstrap=1
+    with_resolv=1 
+    with_locale=1
+    with_proxy=1
+}
+
+bulk_enable_default() {
+    bulk_enable_init
+    with_update=1
+    with_upgrade=1
+    with_user=1
+}
+
+bulk_enable_dev() {
+    bulk_enable_default
+    with_dev_tools=1
+}
+
 main() {
     if [ $# = 0 ]; then
         show_usage
@@ -336,43 +356,23 @@ main() {
             -h|--help)
                 show_usage; exit 0 ;;
             --init)
-                with_debootstrap=1
-                with_resolv=1 
-                with_locale=1
-                with_proxy=1
-                ;;
+                bulk_enable_init ;;
             --default)
-                with_debootstrap=1
-                with_resolv=1 
-                with_locale=1
-                with_proxy=1
-                with_update=1
-                with_upgrade=1
-                with_user=1
-                ;;
+                bulk_enable_default ;;
             --dev)
-                with_debootstrap=1
-                with_resolv=1 
-                with_locale=1
-                with_proxy=1
-                with_i386=1
-                with_dev_tools=1
-                with_update=1
-                with_upgrade=1
-                with_user=1
-                ;;
-            --enable-backports)
+                bulk_enable_dev ;;
+            --with-backports)
                 enable_backports=1 ;;
-            --add-i386)
+            --with-i386)
                 with_i386=1; with_update=1 ;;
-            --install-java8-openjdk)
-                with_java8_openjdk=1; with_update=1 ;;
-            --install-wine)
-                with_wine=1; with_update=1 ;;
-            --install-perforce)
-                with_perforce=1; with_update=1 ;;
-            --install-dev-tools)
+            --with-dev-tools)
                 with_dev_tools=1; with_update=1 ;;
+            --with-java8)
+                with_java8=1; with_update=1 ;;
+            --with-wine)
+                with_wine=1; with_update=1 ;;
+            --with-perforce)
+                with_perforce=1; with_update=1 ;;
             --add-user)
                 with_user=1 ;;
             --skip-update)
@@ -439,8 +439,13 @@ main() {
         upgrade_dist
     fi
 
-    if [ "${with_java8_openjdk-}" ]; then
-        install_java8_openjdk
+    if [ "${with_dev_tools-}" ]; then
+        install_dev_tools
+        install_misc_tools
+    fi
+
+    if [ "${with_java8-}" ]; then
+        install_java8
     fi
 
     if [ "${with_wine-}" ]; then
@@ -449,11 +454,6 @@ main() {
 
     if [ "${with_perforce-}" ]; then
         install_perforce
-    fi
-
-    if [ "${with_dev_tools-}" ]; then
-        install_dev_tools
-        install_misc_tools
     fi
 
     if [ "${with_update-}" ]; then
