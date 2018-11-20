@@ -418,12 +418,11 @@ get_userspec_arg() {
 }
 
 add_user_arg() {
-    local _A= uid=
-    uid=$(find_user_info uid)
+    local _A=
 
     case $spawn_type in
         nspawn|docker)
-            _A="--user=$uid" ;;
+            _A="--user=$spawn_user" ;;
     esac
 
     eval "${1}=\"\$${1}$S$_A\""
