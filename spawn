@@ -99,7 +99,7 @@ parse_command_line() {
                 --bind-home)
                     bind_home="$2"; shift ;;
                 --bind-dir)
-                    bind_dir="$2"; shift ;;
+                    bind_dir_arg="$2"; shift ;;
                 --with-ssh-agent)
                     with_ssh_agent=1 ;;
                 --with-x11)
@@ -339,19 +339,22 @@ get_pa_socket() {
 }
 
 get_command() {
-    local IFS="$S"
+    local IFS="$S" cd_cmd=cd
+    if [ "$bind_dir_arg" ]; then
+        cd_cmd="cd \"$bind_dir_arg\""
+    fi
     case $spawn_type in
         chroot)
             if [ "$spawn_command" ]; then
                 echo "$(escape_quote $spawn_command)"
             else
-                echo "/bin/sh -c 'cd && exec /bin/bash -l'"
+                echo "/bin/sh -c '$cd_cmd && exec /bin/bash -l'"
             fi ;;
         nspawn)
             if [ "$spawn_command" ]; then
                 echo "$spawn_command"
             else
-                echo "/bin/sh${S}-c${S}cd && exec /bin/bash -l"
+                echo "/bin/sh${S}-c${S}$cd_cmd && exec /bin/bash -l"
             fi ;;
         docker)
             echo "${spawn_command-}" ;;
@@ -654,10 +657,10 @@ setup_home_env() {
 setup_bind_env() {
     local IFS oldIFS="$IFS" OUT_A="$1" BIND_A= from to
 
-    [ "${bind_dir-}" ] || return 0
+    [ "${bind_dir_arg-}" ] || return 0
 
     IFS=:
-    set -- $bind_dir
+    set -- $bind_dir_arg
     IFS="$oldIFS"
     from="$1"
     if [ -z "${2-}" ]; then
@@ -671,9 +674,11 @@ setup_bind_env() {
             bind_dir "$from" "$root_dir$to"
             ;;
         *)
-            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir")"
+            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir_arg")"
             ;;
     esac
+
+    BIND_A="$BIND_A$S$(make_env_arg "WD=$bind_dir_arg")"
 
     eval "${OUT_A}=\"\$${OUT_A}$S$BIND_A\""
 }
