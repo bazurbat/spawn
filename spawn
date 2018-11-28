@@ -340,7 +340,7 @@ get_pa_socket() {
 
 get_command() {
     local IFS="$S" cd_cmd=cd
-    if [ "$bind_dir_arg" ]; then
+    if [ "${bind_dir_arg-}" ]; then
         cd_cmd="cd \"$bind_dir_arg\""
     fi
     case $spawn_type in
