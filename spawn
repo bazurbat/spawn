@@ -18,7 +18,7 @@ show_usage() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
 
-  Spawns new container or chroot and configures shared environment.
+  Spawns a new container or chroot and configures a shared environment.
 
 OPTIONS:
 
@@ -27,7 +27,7 @@ OPTIONS:
   -n|--dry-run          Do not run any privileged commands - only print them
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
-  --bind-home <dir>     Bind the specified directory as user home directory
+  --bind-home <dir>     Bind the specified directory as a user's home directory
   --bind-dir <dir>      Mount the specified directory inside the root
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
   --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
@@ -52,6 +52,27 @@ SYNOPSIS:
   existing directory then 'nspawn' will be used if 'systemd-nspawn' was found
   in PATH, otherwise 'chroot'. If the argument is not a directory it is assumed
   to be the name of a Docker container.
+
+  If neither the '--as-root' nor the '--user' option is specified a user inside
+  the spawned environment is assumed to be 'dev'.
+
+  Use the '--bind-home' option to mount the specified directory as a user's home
+  directory inside the chroot. For example, if you run:
+
+      spawn --bind-home $HOME/somedir root
+
+  The directory '$HOME/somedir' will become '/home/dev' inside the spawned
+  chroot (assuming the default 'dev' user is not overridden). Use this to have a
+  separate clean profile and settings from the host or to share the same home
+  directory between different chrooted environments.
+
+  Use the '--bind-dir' option to mount the specified directory inside the chroot
+  at the same path as outside. Run build commands relative to this directory to
+  have compile_commands.json generated with the absolute paths directly usable
+  by editor and language servers outside of the chrooted environment. After
+  spawning the chroot it will be the current working directory and also
+  available as '\$WD' in the environment. It can be the same directory which is
+  specified for '--bind-home'.
 
   Use the '--unlock' option to remove stale lock files from the root directory
   after an unexpected system shutdown, for example.
