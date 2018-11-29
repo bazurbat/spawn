@@ -251,8 +251,9 @@ escape_quote() {
     local arg= result=
     for arg; do
         arg=$(printf "%s" "$arg" | sed "s/'/'\\\''/g")
-        result="$result${S}'$arg'"
+        result="$result${S}$arg"
     done
+    result=${result#${S}}
     printf '%s' "$result"
 }
 
@@ -341,21 +342,17 @@ get_pa_socket() {
 get_command() {
     local IFS="$S" cd_cmd=cd
     if [ "${bind_dir_arg-}" ]; then
-        cd_cmd="cd \"$bind_dir_arg\""
+        cd_cmd="cd \"$(escape_quote "$bind_dir_arg")\""
+    fi
+    if [ -z "${spawn_command-}" ]; then
+        spawn_command="exec${S}/bin/bash${S}-l"
     fi
     case $spawn_type in
-        chroot)
-            if [ "$spawn_command" ]; then
-                echo "$(escape_quote $spawn_command)"
-            else
-                echo "/bin/sh -c '$cd_cmd && exec /bin/bash -l'"
-            fi ;;
-        nspawn)
-            if [ "$spawn_command" ]; then
-                echo "$spawn_command"
-            else
-                echo "/bin/sh${S}-c${S}$cd_cmd && exec /bin/bash -l"
-            fi ;;
+        chroot|nspawn)
+            cat <<EOF
+/bin/sh -c 'IFS=$(printf \"\\t\"); cmd="$(escape_quote "$spawn_command")"; $cd_cmd && \$cmd'
+EOF
+            ;;
         docker)
             echo "${spawn_command-}" ;;
     esac
@@ -802,7 +799,7 @@ spawn_root_nspawn() {
 
     setup_env A
 
-    $E su_run systemd-nspawn $A ${spawn_args-} -D "$root_dir" -- $(get_command)
+    $E su_run systemd-nspawn $A ${spawn_args-} -D "$root_dir" -- /bin/sh -c "exec $(get_command)"
 }
 
 spawn_root_docker() {
