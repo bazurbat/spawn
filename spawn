@@ -365,15 +365,9 @@ get_command() {
     if [ -z "${spawn_command-}" ]; then
         spawn_command="exec${S}/bin/bash${S}-l"
     fi
-    case $spawn_type in
-        chroot|nspawn)
-            cat <<EOF
+    cat <<EOF
 /bin/sh -c 'IFS=$(printf \"\\t\"); cmd="$(escape_quote "$spawn_command")"; $cd_cmd && \$cmd'
 EOF
-            ;;
-        docker)
-            echo "${spawn_command-}" ;;
-    esac
 }
 
 root_mkdir() {
@@ -687,7 +681,7 @@ setup_bind_env() {
             bind_dir "$from" "$root_dir$to"
             ;;
         *)
-            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir_arg")"
+            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir_arg:$bind_dir_arg")"
             ;;
     esac
 
@@ -834,7 +828,7 @@ spawn_root_docker() {
     fi
 
     $E docker run --rm $it_arg ${share_devices:+--privileged} \
-        $A ${spawn_args-} $spawn_name $(get_command)
+        $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
 }
 
 if [ $# = 0 ]; then
