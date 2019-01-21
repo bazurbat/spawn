@@ -280,7 +280,7 @@ escape_quote() {
 
 docker_image_exists() {
     [ "$(command -v docker)" ] || return
-    docker images | grep -q "^\b${1:?}\b"
+    docker images | grep -q "^\b${1%%:*}\b"
 }
 
 user_exists() {
