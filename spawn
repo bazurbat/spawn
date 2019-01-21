@@ -318,11 +318,10 @@ find_user_info() {
             *)
                 case $field in
                      user) echo $spawn_user ;;
+                      uid) echo $euid ;; # assuming that the container
+                      gid) echo $egid ;; # or image is prepared appropriately
                      home) echo /home/$spawn_user ;;
                     shell) echo /bin/bash ;;
-                        *) die "unable to find the value of '$field' for \
-the specified user '$spawn_user', the feature is not supported for Docker \
-containers"
                 esac ;;
         esac
     fi
@@ -844,6 +843,7 @@ if [ $# = 0 ]; then
 fi
 
 euid=${UID:-$(id -u)}
+egid=$(id -g)
 
 parse_command_line "$@"
 validate_environment
