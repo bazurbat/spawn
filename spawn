@@ -346,9 +346,7 @@ get_my_runtime_dir() {
 
 get_runtime_dir() {
     local uid= runtime_dir=
-    uid=$(find_user_info uid)
-    runtime_dir="/run/user/${uid:?}"
-
+    runtime_dir="/run/user/$spawn_user"
     echo "$runtime_dir${1:+/$1}"
 }
 
@@ -480,8 +478,6 @@ make_bind_arg() {
 setup_runtime_env() {
     local _A= uid= gid= config_dir=
 
-    uid=$(find_user_info uid)
-    gid=$(find_user_info gid)
     config_dir=$(get_config_dir)
 
     if [ -z "${my_runtime_dir-}" ]; then
