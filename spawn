@@ -46,7 +46,8 @@ SYNOPSIS:
   Unknown options before <name|directory> are passed to the selected launcher
   as arguments (docker run, chroot, etc.). Everything else after
   <name|directory> and optional '--' is considered the command to be invoked
-  inside the spawned container or chroot.
+  inside the spawned container or chroot. If you want to pass an argument
+  requiring a value use the --name=value form (without whitespace).
 
   If no '--using-*' option was given and the first non-option argument is an
   existing directory then 'nspawn' will be used if 'systemd-nspawn' was found
