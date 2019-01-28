@@ -346,6 +346,8 @@ bulk_enable_dev() {
 }
 
 main() {
+    local argn=$#
+
     if [ $# = 0 ]; then
         show_usage
         exit 0
@@ -395,9 +397,17 @@ main() {
         die "the specified root directory '$root_dir' is not exists"
     fi
 
+    if [ "$argn" = 1 ]; then
+        bulk_enable_default
+    fi
+
     codename=$(get_codename)
     [ "$codename" ] || \
         die "Could not find distribution codename"
+
+    if [ "$(id -u)" != 0 ]; then
+        die "This script requires root priveleges"
+    fi
 
     if [ "${with_debootstrap-}" ]; then
         debootstrap_setup
