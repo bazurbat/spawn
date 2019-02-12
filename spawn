@@ -7,7 +7,6 @@ program_name="spawn"
 S=$(printf '\t')
 E=
 
-spawn_user='dev'
 xsock_dir='/tmp/.X11-unix'
 mountpoints=
 
@@ -185,6 +184,11 @@ unable to check if it is a container because Docker was not found"
         shift
     done
 
+    case $spawn_type in
+        chroot|nspawn)
+            spawn_user=${spawn_user:-dev} ;;
+    esac
+
     spawn_args="${spawn_args:+${spawn_args#$S}}"
     spawn_command="${spawn_command:+${spawn_command#$S}}"
 }
@@ -298,7 +302,7 @@ find_user_info() {
                 break
             fi
         done < "$root_dir/etc/passwd"
-    else
+    elif [ "${spawn_user-}" ]; then
         case $spawn_user in
             root)
                 case $field in
@@ -325,6 +329,12 @@ find_user_info() {
                     shell) echo /bin/bash ;;
                 esac ;;
         esac
+    else
+        case $field in
+              uid) echo "$euid" ;;
+              gid) echo "$egid" ;;
+            shell) echo /bin/bash ;;
+        esac
     fi
 }
 
@@ -335,9 +345,10 @@ get_my_config_dir() {
 get_config_dir() {
     local home_dir= config_dir=
     home_dir=$(find_user_info home)
-    config_dir="${home_dir:?}/.config"
-
-    echo "$config_dir${1:+/$1}"
+    if [ "$home_dir" ]; then
+        config_dir="${home_dir:?}/.config"
+        echo "$config_dir${1:+/$1}"
+    fi
 }
 
 get_my_runtime_dir() {
@@ -346,8 +357,11 @@ get_my_runtime_dir() {
 
 get_runtime_dir() {
     local uid= runtime_dir=
-    runtime_dir="/run/user/$spawn_user"
-    echo "$runtime_dir${1:+/$1}"
+    uid=$(find_user_info uid)
+    if [ "$uid" ]; then
+        runtime_dir="/run/user/$uid"
+        echo "$runtime_dir${1:+/$1}"
+    fi
 }
 
 get_pa_socket() {
@@ -433,6 +447,8 @@ get_userspec_arg() {
 add_user_arg() {
     local _A=
 
+    [ "${spawn_user-}" ] || return 0
+
     case $spawn_type in
         nspawn|docker)
             _A="--user=$spawn_user" ;;
@@ -472,8 +488,6 @@ make_bind_arg() {
 setup_runtime_env() {
     local _A= uid= gid= config_dir=
 
-    config_dir=$(get_config_dir)
-
     if [ -z "${my_runtime_dir-}" ]; then
         my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
     fi
@@ -482,7 +496,9 @@ setup_runtime_env() {
     case $spawn_type in
         chroot)
             _A="$_A$S$(make_env_arg TERM=${TERM-})"
-            _A="$_A$S$(make_env_arg HOME=$spawn_home)"
+            if [ "${spawn_home-}" ]; then
+                _A="$_A$S$(make_env_arg HOME=$spawn_home)"
+            fi
             _A="$_A$S$(make_env_arg USER=$spawn_user)"
             _A="$_A$S$(make_env_arg LOGNAME=$spawn_user)"
 
@@ -501,10 +517,13 @@ setup_runtime_env() {
     esac
 
     _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
-    _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
 
-    if [ "${root_dir-}" ]; then
-        root_mkdir "$config_dir"
+    config_dir=$(get_config_dir)
+    if [ "$config_dir" ]; then
+        _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
+        if [ "${root_dir-}" ]; then
+            root_mkdir "$config_dir"
+        fi
     fi
 
     eval "${1}=\"\$${1}$S$_A\""
@@ -642,6 +661,7 @@ setup_home_env() {
     local HOME_A=
 
     [ "${bind_home-}" ] || return 0
+    [ "${spawn_home-}" ] || return 0
 
     [ -d "$bind_home" ] ||
         die "the bind directory '$bind_home' is not exists"
@@ -844,8 +864,6 @@ parse_command_line "$@"
 validate_environment
 
 spawn_home=$(find_user_info home)
-[ "$spawn_home" ] ||
-    die "failed to find user's home directory"
 
 if [ "${do_unlock-}" ]; then
     unlock; exit
