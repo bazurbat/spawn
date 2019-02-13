@@ -100,96 +100,117 @@ EOF
 }
 
 parse_command_line() {
-    local parsing_command= eoa= is_dir=
+    local name= args= eoa=
 
     while [ $# -gt 0 ]; do
-        if [ "$parsing_command" ]; then
-            spawn_command="${spawn_command-}${S}${1}"
-        else
-            case $1 in
-                --)
-                    parsing_command=1 ;;
-                -h|--help) show_usage; exit ;;
-                -r|--as-root)
-                    spawn_user='root' ;;
-                -n|--dry-run) E=echo ;;
-                -u|--user)
-                    spawn_user="$2"; shift ;;
-                --arch)
-                    spawn_arch="$2"; shift ;;
-                --bind-home)
-                    bind_home="$2"; shift ;;
-                --bind-dir)
-                    bind_dir_arg="$2"; shift ;;
-                --with-ssh-agent)
-                    with_ssh_agent=1 ;;
-                --with-x11)
-                    with_x11=1 ;;
-                --with-pulseaudio)
-                    with_pulseaudio=1 ;;
-                --to-stderr)
-                    to_stderr=1 ;;
-                --share-devices)
-                    share_devices=1 ;;
-                --using-docker)
-                    spawn_type='docker' ;;
-                --using-nspawn)
-                    spawn_type='nspawn' ;;
-                --using-chroot)
-                    spawn_type='chroot' ;;
-                --unlock)
-                    do_unlock=1 ;;
-                --cleanup)
-                    do_cleanup=1 ;;
-                --runtime-dir)
-                    my_runtime_dir=$2; shift ;;
-                -*)
-                    spawn_args="${spawn_args-}${S}$1" ;;
-                *)
-                    case ${spawn_type-} in
-                        chroot|nspawn)
-                            root_dir="$1" ;;
-                        docker)
-                            spawn_name="$1" ;;
-                        '')
-                            if [ -d "$1" ]; then
-                                if [ "$(command -v systemd-nspawn)" ]; then
-                                    spawn_type="nspawn"
-                                else
-                                    spawn_type="chroot"
-                                fi
-                                root_dir="$1"
-                            elif docker_image_exists "$1"; then
-                                spawn_type="docker"
-                                spawn_name="$1"
-                            else
-                                die "unable to find spawn type for: $1"
-                            fi ;;
-                    esac
-                    parsing_command=1
-                    # allow optional '--' after the first non-option argument
-                    [ "${2-}" = '--' ] && shift
-                    ;;
-            esac
-        fi
+        case $1 in
+            --) eoa=1; shift; break ;;
+            -h|--help) show_usage; exit ;;
+            -r|--as-root)
+                spawn_user='root' ;;
+            -n|--dry-run) E=echo ;;
+            -u|--user)
+                spawn_user="$2"; shift ;;
+            --arch)
+                spawn_arch="$2"; shift ;;
+            --bind-home)
+                bind_home="$2"; shift ;;
+            --bind-dir)
+                bind_dir_arg="$2"; shift ;;
+            --with-ssh-agent)
+                with_ssh_agent=1 ;;
+            --with-x11)
+                with_x11=1 ;;
+            --with-pulseaudio)
+                with_pulseaudio=1 ;;
+            --to-stderr)
+                to_stderr=1 ;;
+            --share-devices)
+                share_devices=1 ;;
+            --using-docker)
+                spawn_type='docker' ;;
+            --using-nspawn)
+                spawn_type='nspawn' ;;
+            --using-chroot)
+                spawn_type='chroot' ;;
+            --unlock)
+                do_unlock=1 ;;
+            --cleanup)
+                do_cleanup=1 ;;
+            --runtime-dir)
+                my_runtime_dir=$2; shift ;;
+            -*)
+                spawn_args="${spawn_args-}${S}${1}" ;;
+            *)
+                name="$1"; shift; break ;;
+        esac
         shift
     done
 
-    case $spawn_type in
+    if [ "$eoa" ]; then
+        while [ $# -gt 0 ]; do
+            spawn_args="${spawn_args-}${S}${1}"
+            shift
+        done
+    else
+        while [ $# -gt 0 ]; do
+            case $1 in
+                --) eoa=1; shift; break ;;
+                *) args="${args}${S}${1}" ;;
+            esac
+            shift
+        done
+
+        while [ $# -gt 0 ]; do
+            spawn_command="${spawn_command-}${S}${1}"
+            shift
+        done
+
+        if [ "$eoa" ]; then
+            spawn_args="${spawn_args-}${S}${args#$S}"
+        else
+            spawn_command="${spawn_command-}${S}${args#$S}"
+        fi
+    fi
+
+    case ${spawn_type-} in
+        chroot|nspawn)
+            root_dir="$name" ;;
+        docker)
+            spawn_name="$name" ;;
+        '')
+            if [ -d "$name" ]; then
+                if [ "$(command -v systemd-nspawn)" ]; then
+                    spawn_type="nspawn"
+                else
+                    spawn_type="chroot"
+                fi
+                root_dir="$name"
+            elif [ "$name" ] && docker_image_exists "$name"; then
+                spawn_type="docker"
+                spawn_name="$name"
+            fi ;;
+    esac
+
+    case ${spawn_type-} in
         chroot|nspawn)
             spawn_user=${spawn_user:-dev} ;;
     esac
 
-    spawn_args="${spawn_args:+${spawn_args#$S}}"
-    spawn_command="${spawn_command:+${spawn_command#$S}}"
+    spawn_args=${spawn_args+${spawn_args#$S}}
+    spawn_command=${spawn_command+${spawn_command#$S}}
 }
 
 validate_environment() {
-    if [ -z "${root_dir-}" ] && [ -z "${spawn_name-}" ]; then
-        die "root directory or image name to spawn is not specified"
+    if [ "${spawn_type-}" ]; then
+        :
+    else
+        if [ -z "${root_dir-}" ] && [ -z "${spawn_name-}" ]; then
+            die "root directory or image name to spawn is not specified"
+        fi
     fi
 
-    case $spawn_type in
+    case ${spawn_type-} in
         chroot|nspawn)
             [ "${root_dir-}" ] ||
                 die "root directory is not specified"
@@ -201,12 +222,14 @@ validate_environment() {
                 die "the specified user '$spawn_user' is not found in '$root_dir'"
             ;;
         docker)
-            [ "${spawn_name-}" ] ||
-                die "container name is not specified"
-            [ "$(command -v docker)" ] ||
-                die "docker command was not found"
-            docker_image_exists "$spawn_name" ||
-                die "the specified container image '$spawn_name' is not exists"
+            if [ -z "${spawn_args-}" ]; then
+                [ "${spawn_name-}" ] ||
+                    die "container name is not specified"
+                [ "$(command -v docker)" ] ||
+                    die "docker command was not found"
+                docker_image_exists "$spawn_name" ||
+                    die "the specified container image '$spawn_name' is not exists"
+            fi
     esac
 
     case $spawn_type in
@@ -841,8 +864,11 @@ spawn_root_docker() {
         it_arg='-it'
     fi
 
+    # TODO: maybe make default get_command an option?
+    # $E docker run --rm $it_arg ${share_devices:+--privileged} \
+    #     $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
     $E docker run --rm $it_arg ${share_devices:+--privileged} \
-        $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
+        $A ${spawn_args-} $spawn_name $spawn_command
 }
 
 if [ $# = 0 ]; then
@@ -865,20 +891,24 @@ if [ "${do_cleanup-}" ]; then
     umount_all; unlock; exit
 fi
 
-if [ "${spawn_name-}" ]; then
-    spawn_root_docker
-elif [ "${root_dir-}" ]; then
-    if is_locked "$root_dir"; then
-        die "the directory '$root_dir' is locked by another spawn instance, \
-use '--cleanup' option to remove stale locks"
-    fi
-    lock_dir "$root_dir"
+case $spawn_type in
+    docker)
+        spawn_root_docker
+        ;;
+    nspawn|chroot)
+        if [ "${root_dir-}" ]; then
+            if is_locked "$root_dir"; then
+                die "the directory '$root_dir' is locked by another spawn instance, \
+                    use '--cleanup' option to remove stale locks"
+            fi
+            lock_dir "$root_dir"
 
-    if [ "$spawn_type" = 'nspawn' ]; then
-        spawn_root_nspawn
-    else
-        spawn_root_chroot
-    fi
-else
-    die "container name or chroot directory is not specified"
-fi
+            if [ "$spawn_type" = 'nspawn' ]; then
+                spawn_root_nspawn
+            else
+                spawn_root_chroot
+            fi
+        else
+            die "chroot directory is not specified"
+        fi ;;
+esac
