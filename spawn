@@ -159,20 +159,11 @@ parse_command_line() {
                                     spawn_type="chroot"
                                 fi
                                 root_dir="$1"
+                            elif docker_image_exists "$1"; then
+                                spawn_type="docker"
+                                spawn_name="$1"
                             else
-                                [ "$1" = "${1#*/}" ] || \
-                                    die "the directory '$1' does not exist"
-                                if [ "$(command -v docker)" ]; then
-                                    if docker_image_exists "$1"; then
-                                        spawn_type="docker"
-                                        spawn_name="$1"
-                                    else
-                                        die "the container '$1' does not exist"
-                                    fi
-                                else
-                                    die "the name '$1' is not a directory and \
-unable to check if it is a container because Docker was not found"
-                                fi
+                                die "unable to find spawn type for: $1"
                             fi ;;
                     esac
                     parsing_command=1
@@ -285,7 +276,9 @@ escape_quote() {
 
 docker_image_exists() {
     [ "$(command -v docker)" ] || return
-    docker images | grep -q "^\b${1%%:*}\b"
+    # it seems like the image name could be basically anything, some scripts
+    # create images which look like hostnames, so any heuristic here is futile
+    docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}"
 }
 
 user_exists() {
