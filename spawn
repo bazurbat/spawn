@@ -143,7 +143,14 @@ parse_command_line() {
 
     if [ "$eoa" ]; then
         while [ $# -gt 0 ]; do
-            spawn_args="${spawn_args-}${S}${1}"
+            case $1 in
+                -*)
+                    spawn_args="${spawn_args-}${S}${1}"
+                    ;;
+                 *) [ "$name" ] || name="$1"
+                    spawn_args="${spawn_args-}${S}${1}"
+                    ;;
+            esac
             shift
         done
     else
@@ -180,7 +187,7 @@ parse_command_line() {
                     spawn_type="chroot"
                 fi
                 root_dir="$name"
-            elif [ "$name" ] && docker_image_exists "$name"; then
+            else
                 spawn_type="docker"
                 spawn_name="$name"
             fi ;;
@@ -191,14 +198,6 @@ parse_command_line() {
 }
 
 validate_environment() {
-    if [ "${spawn_type-}" ]; then
-        :
-    else
-        if [ -z "${root_dir-}" ] && [ -z "${spawn_name-}" ]; then
-            die "root directory or image name to spawn is not specified"
-        fi
-    fi
-
     case ${spawn_type-} in
         chroot|nspawn)
             [ "${root_dir-}" ] ||
@@ -209,13 +208,13 @@ validate_environment() {
                 die "/etc/passwd is not exists in '$root_dir'"
             ;;
         docker)
+            [ "$(command -v docker)" ] ||
+                die "docker command was not found"
+            [ "${spawn_name-}" ] ||
+                die "container name is not specified"
             if [ -z "${spawn_args-}" ]; then
-                [ "${spawn_name-}" ] ||
-                    die "container name is not specified"
-                [ "$(command -v docker)" ] ||
-                    die "docker command was not found"
                 docker_image_exists "$spawn_name" ||
-                    die "the specified container image '$spawn_name' is not exists"
+                    die "the specified container image '$spawn_name' does not exist"
             fi
     esac
 
@@ -258,7 +257,7 @@ validate_environment() {
 die() {
     local sts=$?
     [ $sts = 0 ] && sts=2
-    [ $# = 0 ] || echo Error: $* >&3
+    [ $# = 0 ] || echo $program_name error: $* >&3
     exit $sts
 }
 
