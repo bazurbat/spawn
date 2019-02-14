@@ -810,6 +810,13 @@ EOF
 )"
 
     $E su_run $arch env - $env unshare -mpf /bin/sh -c "$cmd"
+    cat <<EOF
+$program_name warning: if you see the message below similar to:
+
+    [1]+  Stopped                 spawn ...
+
+you need to bring the script into the foreground using the 'fg' command and enter the password as requested to let the cleanup to finish. Alternatively, install systemd-nspawn or run spawn as root to avoid this problem.
+EOF
 }
 
 spawn_root_nspawn() {
