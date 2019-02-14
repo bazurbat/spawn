@@ -186,11 +186,6 @@ parse_command_line() {
             fi ;;
     esac
 
-    case ${spawn_type-} in
-        chroot|nspawn)
-            spawn_user=${spawn_user:-dev} ;;
-    esac
-
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
 }
@@ -212,10 +207,6 @@ validate_environment() {
                 die "the specified root directory '$root_dir' is not exists"
             [ -f "$root_dir/etc/passwd" ] ||
                 die "/etc/passwd is not exists in '$root_dir'"
-            is_number "${spawn_user-}" &&
-                die "the specified user '$spawn_user' should not be a number"
-            user_exists "$spawn_user" ||
-                die "the specified user '$spawn_user' is not found in '$root_dir'"
             ;;
         docker)
             if [ -z "${spawn_args-}" ]; then
@@ -307,52 +298,40 @@ docker_image_exists() {
     docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}"
 }
 
-user_exists() {
-    grep -q "^$1:" "$root_dir/etc/passwd"
-}
-
 find_user_info() {
-    local field="$1"
+    local field="$1" user_arg="${2-}" group_arg="${3-}"
     if [ "${root_dir-}" ]; then
         [ -f "$root_dir/etc/passwd" ] || return
         while IFS=: read -r user pass uid gid gecos home shell; do
-            if [ "$user" = "$spawn_user" ]; then
+            if is_number "$user_arg" && [ "$uid" = "$user_arg" ] ||
+                    [ "$user" = "$user_arg" ]; then
                 eval "echo \$$field"
                 break
             fi
         done < "$root_dir/etc/passwd"
-    elif [ "${spawn_user-}" ]; then
-        case $spawn_user in
-            root)
+    else
+        case $user_arg in
+            0|root)
                 case $field in
-                     user) echo root ;;
-                      uid) echo 0 ;;
-                      gid) echo 0 ;;
-                     home) echo /root ;;
-                    shell) echo /bin/bash ;;
-                esac ;;
-            dev)
-                case $field in
-                     user) echo $spawn_user ;;
-                      uid) echo 1000 ;;
-                      gid) echo 100  ;;
-                     home) echo /home/$spawn_user ;;
-                    shell) echo /bin/bash ;;
+                    user) echo root ;;
+                     uid) echo 0 ;;
+                     gid) echo ${group_arg:-0} ;;
+                    home) echo /root ;;
                 esac ;;
             *)
-                case $field in
-                     user) echo $spawn_user ;;
-                      uid) echo $euid ;; # assuming that the container
-                      gid) echo $egid ;; # or image is prepared appropriately
-                     home) echo /home/$spawn_user ;;
-                    shell) echo /bin/bash ;;
-                esac ;;
-        esac
-    else
-        case $field in
-              uid) echo "$euid" ;;
-              gid) echo "$egid" ;;
-            shell) echo /bin/bash ;;
+                if is_number "$user_arg"; then
+                    case $field in
+                        uid) echo $user_arg ;;
+                        gid) echo $group_arg ;;
+                    esac
+                else
+                    case $field in
+                        user) echo $user_arg ;;
+                         uid) echo $euid ;;
+                         gid) echo ${group_arg-$(id -g)} ;;
+                        home) echo /home/$user_arg ;;
+                    esac
+                fi ;;
         esac
     fi
 }
@@ -446,12 +425,6 @@ lock_dir() {
 
 unlock_dir() {
     su_run rm -f "$(get_lock_filename "${1:?}")"
-}
-
-get_userspec_arg() {
-    local uid= gid=
-    uid=$(find_user_info uid); gid=$(find_user_info gid)
-    echo "--userspec=${uid:?}:${gid:?}"
 }
 
 add_user_arg() {
@@ -780,11 +753,14 @@ cleanup() {
 }
 
 spawn_root_chroot() {
-    local IFS="$S" arch= env= cmd=
+    local IFS="$S" arch= userspec= env= cmd=
 
     trap cleanup EXIT
 
     arch=$(make_setarch)
+    # TODO: fix this to handle GID
+    userspec="--userspec=${spawn_user_name:-${spawn_user}}"
+
     setup_env env
 
     cmd=$(cat <<EOF
@@ -826,8 +802,8 @@ EOF
     fi
 
     cmd="$cmd; $(cat <<EOF
-mount --rbind "$my_runtime_dir" "$root_dir$runtime_dir"
-$chroot $(get_userspec_arg) "$root_dir" $(get_command)
+[ "${my_runtime_dir-}" ] && mount --rbind "${my_runtime_dir-}" "$root_dir${runtime_dir-}"
+$chroot $userspec "$root_dir" $(get_command)
 EOF
 )"
 
@@ -875,13 +851,22 @@ if [ $# = 0 ]; then
 fi
 
 euid=${UID:-$(id -u)}
-egid=$(id -g)
 
 parse_command_line "$@"
-spawn_user=${spawn_user-$euid}
-validate_environment
+: ${spawn_user=$euid}
+spawn_user_a=${spawn_user%:*}
+if [ "$spawn_user" != "$spawn_user_a" ]; then
+    spawn_user_b=${spawn_user#*:}
+fi
 
-spawn_home=$(find_user_info home)
+spawn_user_name=$(find_user_info user "$spawn_user_a" "${spawn_user_b-}")
+spawn_user_uid=$(find_user_info uid "$spawn_user_a" "${spawn_user_b-}")
+spawn_user_gid=$(find_user_info gid "$spawn_user_a" "${spawn_user_b-}")
+spawn_user_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}")
+
+unset spawn_user_a spawn_user_b
+
+validate_environment
 
 if [ "${do_unlock-}" ]; then
     unlock; exit
