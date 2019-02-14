@@ -397,7 +397,7 @@ bind_file() {
 }
 
 bind_dir() {
-    su_run mkdir -p "${2:?}"
+    su_run mkdir -p "$2"
     bind_mount "$1" "$2"
 }
 
@@ -645,24 +645,27 @@ setup_pa_env() {
 }
 
 setup_home_env() {
-    local HOME_A=
+    local HOME_A= src= dest=
 
-    [ "${bind_home-}" ] || return 0
-    [ "${spawn_home-}" ] || return 0
+    [ "${bind_home-}"  ] || return 0
 
-    [ -d "$bind_home" ] ||
-        die "the bind directory '$bind_home' is not exists"
-
-    if [ "${root_dir-}" ]; then
-        root_mkdir "$spawn_home"
+    src=${bind_home%:*}
+    if [ "$src" != "$bind_home" ]; then
+        dest=${bind_home#*:}
     fi
+    : ${dest:=$spawn_home}
+
+    [ -d "$src" ] ||
+        die "the source directory to bind home does not exist: $src"
+    [ "$dest" ] ||
+        die "unable to find the target directory to bind home"
 
     case $spawn_type in
         chroot)
-            bind_dir "$bind_home" "$root_dir$spawn_home"
+            bind_dir "$src" "$root_dir$dest"
             ;;
         *)
-            HOME_A="$HOME_A$S$(make_bind_arg "$bind_home:$spawn_home")"
+            HOME_A="$HOME_A$S$(make_bind_arg "$src:$dest")"
             ;;
     esac
 
@@ -862,7 +865,7 @@ fi
 spawn_user_name=$(find_user_info user "$spawn_user_a" "${spawn_user_b-}")
 spawn_user_uid=$(find_user_info uid "$spawn_user_a" "${spawn_user_b-}")
 spawn_user_gid=$(find_user_info gid "$spawn_user_a" "${spawn_user_b-}")
-spawn_user_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}")
+spawn_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}")
 
 unset spawn_user_a spawn_user_b
 
