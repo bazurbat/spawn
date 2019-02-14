@@ -504,6 +504,11 @@ make_bind_arg() {
 setup_runtime_env() {
     local _A= uid= gid= config_dir=
 
+    [ -z "${with_ssh_agent-}"  ] &&
+    [ -z "${with_x11-}"        ] &&
+    [ -z "${with_pulseaudio-}" ] &&
+        return 0
+
     if [ -z "${my_runtime_dir-}" ]; then
         my_runtime_dir=$(mktemp -dp "$(get_my_runtime_dir)" spawn.XXXXXXXXXX)
     fi
