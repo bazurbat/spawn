@@ -17,11 +17,38 @@ show_usage() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
 
+  -h                    Show usage information
+  --help                Show full help
+  -r|--as-root          Use superuser inside the spawned root
+  -n|--dry-run          Do not run any privileged commands - only print them
+  --user <name>         Assume <name> user inside the container
+  --arch <arch>         Set architecture reported by uname(2)
+  --bind-home <dir>     Bind the specified directory as a user's home directory
+  --bind-dir <dir>      Mount the specified directory inside the root
+  --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
+  --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
+  --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
+  --to-stderr           Redirect all container command output to stderr
+  --share-devices       Share devices with the host
+  --using-docker        Use Docker to spawn the named container
+  --using-nspawn        Use 'systemd-nspawn' to chroot
+  --using-chroot        Use the regular 'chroot'
+  --unlock              Remove the lock file
+  --cleanup             Release stale mount points and unlock
+
+EOF
+}
+
+show_help() {
+    cat <<EOF
+Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
+
   Spawns a new container or chroot and configures a shared environment.
 
 OPTIONS:
 
-  -h|--help             Print this help message
+  -h                    Show usage information
+  --help                Show full help
   -r|--as-root          Use superuser inside the spawned root
   -n|--dry-run          Do not run any privileged commands - only print them
   --user <name>         Assume <name> user inside the container
@@ -101,7 +128,8 @@ parse_command_line() {
     while [ $# -gt 0 ]; do
         case $1 in
             --) eoa=1; shift; break ;;
-            -h|--help) show_usage; exit ;;
+            -h) show_usage; exit ;;
+            --help) show_help; exit ;;
             -r|--as-root)
                 spawn_user='root' ;;
             -n|--dry-run) E=echo ;;
