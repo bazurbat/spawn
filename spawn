@@ -833,25 +833,27 @@ spawn_root_nspawn() {
 }
 
 spawn_root_docker() {
-    local IFS="$S" A= it_arg=
+    local IFS="$S" A= it_arg= cmd=
 
     trap cleanup EXIT
 
     setup_env A
 
-    if [ "${spawn_command-}" ]; then
-        if [ "${to_stderr-}" ]; then
-            exec 1>&2
-        fi
-    else
-        it_arg='-it'
-    fi
+    cmd=${spawn_command#%} cmd=${cmd#$S}
 
-    # TODO: maybe make default get_command an option?
-    # $E docker run --rm $it_arg ${share_devices:+--privileged} \
-    #     $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
-    $E docker run --rm $it_arg ${share_devices:+--privileged} \
-        $A ${spawn_args-} $spawn_name $spawn_command
+    if [ "${to_stderr-}" -a "$cmd" ]; then
+        exec 1>&2
+    fi
+    [ "$cmd" ] || it_arg="-it"
+
+    if [ "$spawn_command" != "$cmd" ]; then
+        spawn_command=$cmd
+        $E docker run --rm $it_arg ${share_devices:+--privileged} \
+            $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
+    else
+        $E docker run --rm $it_arg ${share_devices:+--privileged} \
+            $A ${spawn_args-} $spawn_name $cmd
+    fi
 }
 
 if [ $# = 0 ]; then
