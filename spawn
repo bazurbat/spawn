@@ -656,8 +656,14 @@ setup_home_env() {
 
     [ -d "$src" ] ||
         die "the source directory to bind home does not exist: $src"
-    [ "$dest" ] ||
-        die "unable to find the target directory to bind home"
+    if [ -z "$dest" ]; then
+        if [ "$spawn_type" = "docker" ]; then
+            die "could not find home directory to bind to: please specify a \
+user existing inside the container by name"
+        else
+            die "failed to find home directory for user: $spawn_user"
+        fi
+    fi
 
     case $spawn_type in
         chroot)
