@@ -368,8 +368,7 @@ get_my_config_dir() {
 }
 
 get_config_dir() {
-    local home_dir= config_dir=
-    home_dir=$(find_user_info home)
+    local home_dir="$spawn_home" config_dir=
     if [ "$home_dir" ]; then
         config_dir="${home_dir:?}/.config"
         echo "$config_dir${1:+/$1}"
@@ -402,8 +401,7 @@ EOF
 }
 
 root_mkdir() {
-    local uid= gid=
-    uid=$(find_user_info uid); gid=$(find_user_info gid)
+    local uid="$spawn_user_uid" gid="$spawn_user_gid"
     su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${root_dir:?}${1:?}"
 }
 
@@ -579,7 +577,7 @@ setup_ssh_env() {
     [ -S "$SSH_AUTH_SOCK" ] ||
         die "$SSH_AUTH_SOCK socket is not exists or is not a socket"
 
-    uid=$(find_user_info uid)
+    uid=$spawn_user_uid
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$runtime_dir/ssh")"
 
