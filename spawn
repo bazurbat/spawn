@@ -140,7 +140,9 @@ parse_command_line() {
             --bind-home)
                 bind_home="$2"; shift ;;
             --bind-dir)
-                bind_dir_arg="$2"; shift ;;
+                bind_dir_args="${bind_dir_args-}$S$2"
+                [ "${bind_dir_arg-}" ] || bind_dir_arg="$2";
+                shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
             --with-x11)
@@ -223,6 +225,7 @@ parse_command_line() {
 
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
+    bind_dir_args=${bind_dir_args+${bind_dir_args#$S}}
 }
 
 validate_environment() {
@@ -704,28 +707,30 @@ user existing inside the container by name"
 }
 
 setup_bind_env() {
-    local IFS oldIFS="$IFS" OUT_A="$1" BIND_A= from to
+    local IFS="$S" oldIFS="$IFS" OUT_A="$1" BIND_A= from to dir
 
     [ "${bind_dir_arg-}" ] || return 0
 
-    IFS=:
-    set -- $bind_dir_arg
-    IFS="$oldIFS"
-    from="$1"
-    if [ -z "${2-}" ]; then
-        to="${from}"
-    else
-        to="$2"
-    fi
+    for dir in ${bind_dir_args-}; do
+        IFS=:
+        set -- $dir
+        IFS="$oldIFS"
+        from="$1"
+        if [ -z "${2-}" ]; then
+            to="${from}"
+        else
+            to="$2"
+        fi
 
-    case $spawn_type in
-        chroot)
-            bind_dir "$from" "$root_dir$to"
-            ;;
-        *)
-            BIND_A="$BIND_A$S$(make_bind_arg "$bind_dir_arg:$bind_dir_arg")"
-            ;;
-    esac
+        case $spawn_type in
+            chroot)
+                bind_dir "$from" "$root_dir$to"
+                ;;
+            *)
+                BIND_A="$BIND_A$S$(make_bind_arg "$dir:$dir")"
+                ;;
+        esac
+    done
 
     BIND_A="$BIND_A$S$(make_env_arg "WD=$bind_dir_arg")"
 
