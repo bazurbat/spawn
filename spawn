@@ -300,7 +300,11 @@ su_run() {
     if [ "${euid:?}" = "0" ]; then
         $E "$@"
     else
-        $E sudo "$@"
+        if [ -t 0 ]; then
+            $E sudo "$@"
+        else
+            $E sudo -A "$@"
+        fi
     fi
 }
 
