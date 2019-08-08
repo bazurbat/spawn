@@ -1,0 +1,57 @@
+#!/bin/sh
+
+set -eu
+
+die() {
+    echo "$(basename "$0"): $*"
+    exit 1
+}
+
+show_usage() {
+    cat <<EOF
+Usage: $(basename "$0") INPUT [OUTPUT]
+
+Creates self-contained spawn launchers.
+
+Attaches the contents of the spawn script to the end of the provided input file
+and defines the "spawn" shell function which, unless the 'spawn' is found in
+PATH, extracts the attachment and runs it instead.
+
+EOF
+}
+
+main() {
+    local in_file="${1-}" out_file="${2-}"
+    if [ -z "$in_file" ]; then
+        show_usage; exit 0
+    fi
+    case $in_file in
+        -h|--help)
+            show_usage; exit 0 ;;
+    esac
+    local own_dir extractor spawn shebang
+    [ -f "$in_file" ] || \
+        die "could not find input file: $in_file"
+    if [ -z "$out_file" ]; then
+        out_file="${in_file}.wrapped"
+    fi
+    own_dir=$(dirname "$0")
+    extractor="$own_dir/extractor"
+    spawn="$own_dir/spawn"
+    [ -f "$extractor" ] || \
+        die "could not find extractor: $extractor"
+    [ -f "$spawn" ] || \
+        die "could not find spawn: $spawn"
+    shebang=$(head -1 "$in_file")
+    if [ "${shebang#\#!}" != "$shebang" ]; then
+        echo "$shebang" | cat - "$extractor" > "$out_file"
+    else
+        cat "$extractor" > "$out_file"
+    fi
+    cat "$in_file" >> "$out_file"
+    echo 'exit $?' >> "$out_file"
+    echo "__SPAWN__" | cat - "$spawn" >> "$out_file"
+    chmod "$(stat -c%a "$in_file")" "$out_file"
+}
+
+main "$@"

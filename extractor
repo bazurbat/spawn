@@ -1,0 +1,32 @@
+### BEGIN spawn extractor ###
+spawn__extract_from_this() {
+    local start_tag="$1" end_tag="$2"
+    local start_line end_line
+    start_line=$(awk "/^$start_tag\$/ { print NR+1; exit 0 }" "$0")
+    if [ "$end_tag" ]; then
+        end_line=$(awk "/^$end_tag\$/ { print NR-1; exit 0 }" "$0")
+    fi
+    if [ "$start_line" -a "$end_line" ]; then
+        head -n$end_line "$0" | tail -n+$start_line
+    elif [ "$start_line" ]; then
+        tail -n+$start_line "$0"
+    fi
+}
+
+spawn() {
+    local cmd="$(which spawn)"
+    if [ "$cmd" ]; then
+        exec "$cmd" "$@"
+    else
+        cmd=$(mktemp)
+        [ "$cmd" ] || return
+        spawn__extract_from_this __SPAWN__ > "$cmd"
+        if [ "$(stat -c%s "$cmd")" = 0 ]; then
+            echo "$(basename "$0"): failed to extract spawn script attached to the launcher" >&2
+            exit 1
+        fi
+        sh "$cmd" "$@"
+        rm "$cmd"
+    fi
+}
+### END spawn extractor ###
