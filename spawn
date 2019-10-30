@@ -711,32 +711,39 @@ user existing inside the container by name"
 }
 
 setup_bind_env() {
-    local IFS="$S" oldIFS="$IFS" OUT_A="$1" BIND_A= from to dir
+    local IFS="$S" oldIFS="$IFS" OUT_A="$1" BIND_A= from to opt opts dir
 
     [ "${bind_dir_arg-}" ] || return 0
 
+    # FIXME: this naive splitting approach does not work with escaped ':', so
+    # binding paths containing ':' is not possible
     for dir in ${bind_dir_args-}; do
         IFS=:
         set -- $dir
         IFS="$oldIFS"
-        from="$1"
-        if [ -z "${2-}" ]; then
+        from="$1"; shift
+        if [ -z "${1-}" ]; then
             to="${from}"
         else
-            to="$2"
+            to="$1"; shift
         fi
+        for opt do
+            opts="${opts-}:$opt"
+        done
 
         case $spawn_type in
             chroot)
                 bind_dir "$from" "$root_dir$to"
                 ;;
             *)
-                BIND_A="$BIND_A$S$(make_bind_arg "$dir:$dir")"
+                BIND_A="$BIND_A$S$(make_bind_arg "$from:$to${opts-}")"
                 ;;
         esac
     done
 
-    BIND_A="$BIND_A$S$(make_env_arg "WD=$bind_dir_arg")"
+    if [ "${to-}" ]; then
+        BIND_A="$BIND_A$S$(make_env_arg "WD=$to")"
+    fi
 
     eval "${OUT_A}=\"\$${OUT_A}$S$BIND_A\""
 }
