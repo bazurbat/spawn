@@ -134,14 +134,14 @@ parse_command_line() {
                 spawn_user='root' ;;
             -n|--dry-run) E=echo ;;
             -u|--user)
-                spawn_user="$2"; shift ;;
+                spawn_user="${2-}"; shift ;;
             --arch)
-                spawn_arch="$2"; shift ;;
+                spawn_arch="${2-}"; shift ;;
             --bind-home)
-                bind_home="$2"; shift ;;
+                bind_home="${2-}"; shift ;;
             --bind-dir)
-                bind_dir_args="${bind_dir_args-}$S$2"
-                [ "${bind_dir_arg-}" ] || bind_dir_arg="$2";
+                bind_dir_args="${bind_dir_args-}$S${2-}"
+                [ "${bind_dir_arg-}" ] || bind_dir_arg="${2-}";
                 shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
@@ -172,17 +172,7 @@ parse_command_line() {
     done
 
     if [ "$eoa" ]; then
-        while [ $# -gt 0 ]; do
-            case $1 in
-                -*)
-                    spawn_args="${spawn_args-}${S}${1}"
-                    ;;
-                 *) [ "$name" ] || name="$1"
-                    spawn_args="${spawn_args-}${S}${1}"
-                    ;;
-            esac
-            shift
-        done
+        spawn_extra_args="$@"
     else
         while [ $# -gt 0 ]; do
             case $1 in
@@ -241,9 +231,11 @@ validate_environment() {
         docker)
             [ "$(command -v docker)" ] ||
                 die "docker command was not found"
-            [ "${spawn_name-}" ] ||
-                die "container name is not specified"
-            if [ -z "${spawn_args-}" ]; then
+            if [ -z "${spawn_extra_args-}" ]; then
+                [ "${spawn_name-}" ] ||
+                    die "container name is not specified"
+            fi
+            if [ "${spawn_name-}" ]; then
                 docker_image_exists "$spawn_name" ||
                     die "the specified container image '$spawn_name' does not exist"
             fi
@@ -897,10 +889,10 @@ spawn_root_docker() {
     if [ "$spawn_command" != "$cmd" ]; then
         spawn_command=$cmd
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} $spawn_name /bin/sh -c "exec $(get_command)"
+            $A ${spawn_args-} ${spawn_extra_args-} ${spawn_name-} /bin/sh -c "exec $(get_command)"
     else
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} $spawn_name $cmd
+            $A ${spawn_args-} ${spawn_extra_args-} ${spawn_name-} $cmd
     fi
 }
 
