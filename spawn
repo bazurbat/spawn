@@ -123,25 +123,29 @@ EOF
 }
 
 parse_command_line() {
-    local name= args= eoa=
+    local name=
 
     while [ $# -gt 0 ]; do
         case $1 in
-            --) eoa=1; shift; break ;;
+            --) shift; break ;;
             -h) show_usage; exit ;;
             --help) show_help; exit ;;
+            -i|--image)
+                spawn_image=${2-}; shift ;;
+            -d|--directory)
+                spawn_dir=${2-}; shift ;;
             -r|--as-root)
                 spawn_user='root' ;;
-            -n|--dry-run) E=echo ;;
+            -n|--dry-run) E='echo' ;;
             -u|--user)
-                spawn_user="${2-}"; shift ;;
+                spawn_user=${2-}; shift ;;
             --arch)
-                spawn_arch="${2-}"; shift ;;
+                spawn_arch=${2-}; shift ;;
             --bind-home)
-                bind_home="${2-}"; shift ;;
+                bind_home=${2-}; shift ;;
             --bind-dir)
-                bind_dir_args="${bind_dir_args-}$S${2-}"
-                [ "${bind_dir_arg-}" ] || bind_dir_arg="${2-}";
+                bind_dir_args=${bind_dir_args-}$S${2-}
+                [ "${bind_dir_arg-}" ] || bind_dir_arg=${2-}
                 shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
@@ -164,54 +168,56 @@ parse_command_line() {
             --cleanup)
                 do_cleanup=1 ;;
             -*)
-                spawn_args="${spawn_args-}${S}${1}" ;;
+                die "unrecognized argument: $1" ;;
             *)
-                name="$1"; shift; break ;;
+                if [ -z "${spawn_image-}" ] && [ -z "${spawn_directory-}" ]
+                then
+                    name=${1}; shift
+                    break
+                fi ;;
         esac
         shift
     done
 
-    if [ "$eoa" ]; then
-        spawn_extra_args="$@"
-    else
-        while [ $# -gt 0 ]; do
-            case $1 in
-                --) eoa=1; shift; break ;;
-                *) args="${args}${S}${1}" ;;
-            esac
-            shift
-        done
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --) spawn_args=${spawn_command-}; spawn_command=; shift; break ;;
+             *) spawn_command=${spawn_command-}${S}${1} ;;
+        esac
+        shift
+    done
 
-        while [ $# -gt 0 ]; do
-            spawn_command="${spawn_command-}${S}${1}"
-            shift
-        done
-
-        if [ "$eoa" ]; then
-            spawn_args="${spawn_args-}${S}${args#$S}"
-        else
-            spawn_command="${spawn_command-}${S}${args#$S}"
-        fi
-    fi
+    while [ $# -gt 0 ]; do
+        spawn_command=${spawn_command-}${S}${1}
+        shift
+    done
 
     case ${spawn_type-} in
         chroot|nspawn)
-            root_dir="$name" ;;
+            : ${spawn_dir=$name} ;;
         docker)
-            spawn_name="$name" ;;
+            : ${spawn_image=$name} ;;
         '')
-            if [ -d "$name" ]; then
-                if [ "$(command -v systemd-nspawn)" ]; then
-                    spawn_type="nspawn"
-                else
-                    spawn_type="chroot"
-                fi
-                root_dir="$name"
+            if [ "${spawn_image-}" ]; then
+                spawn_type='docker'
+            elif [ "${spawn_dir-}" ]; then
+                spawn_type='dir...'
+            elif [ -d "$name" ]; then
+                spawn_type='dir...'
+                spawn_dir=${name}
             else
-                spawn_type="docker"
-                spawn_name="$name"
+                spawn_type='docker'
+                spawn_image=${name}
             fi ;;
     esac
+
+    if [ "$spawn_type" = 'dir...' ]; then
+        if [ "$(command -v systemd-nspawn)" ]; then
+            spawn_type='nspawn'
+        else
+            spawn_type='chroot'
+        fi
+    fi
 
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
@@ -219,29 +225,30 @@ parse_command_line() {
 }
 
 validate_environment() {
+    if [ -z "${spawn_image-}" -a -z "${spawn_dir-}" ]; then
+        die "neither container image nor directory is specified"
+    fi
     case ${spawn_type-} in
         chroot|nspawn)
-            [ "${root_dir-}" ] ||
+            [ "${spawn_dir-}" ] ||
                 die "root directory is not specified"
-            [ -d "$root_dir" ] ||
-                die "the specified root directory '$root_dir' is not exists"
-            [ -f "$root_dir/etc/passwd" ] ||
-                die "/etc/passwd is not exists in '$root_dir'"
+            [ -d "$spawn_dir" ] ||
+                die "the specified root directory '$spawn_dir' is not exists"
+            [ -f "$spawn_dir/etc/passwd" ] ||
+                die "/etc/passwd is not exists in '$spawn_dir'"
             ;;
         docker)
             [ "$(command -v docker)" ] ||
                 die "docker command was not found"
-            if [ -z "${spawn_extra_args-}" ]; then
-                [ "${spawn_name-}" ] ||
-                    die "container name is not specified"
-            fi
-            if [ "${spawn_name-}" ]; then
-                docker_image_exists "$spawn_name" ||
-                    die "the specified container image '$spawn_name' does not exist"
+            [ "${spawn_image-}" ] ||
+                die "container name is not specified"
+            if [ "${spawn_image-}" ]; then
+                docker_image_exists "$spawn_image" ||
+                    die "the specified container image '$spawn_image' does not exist"
             fi
     esac
 
-    case $spawn_type in
+    case ${spawn_type-} in
         nspawn)
             [ "$(command -v systemd-nspawn)" ] ||
                 die "systemd-nspawn command was not found"
@@ -269,7 +276,7 @@ validate_environment() {
             ;;
     esac
 
-    case $spawn_type in
+    case ${spawn_type-} in
         nspawn)
             if [ "${share_devices-}" ]; then
                 die "the '--share-devices' option is not supported for nspawn"
@@ -285,7 +292,7 @@ die() {
 }
 
 warn() {
-    echo "Warning: $*"
+    echo "$program_name warning: $*"
 }
 
 su_run() {
@@ -321,20 +328,21 @@ docker_image_exists() {
     [ "$(command -v docker)" ] || return
     # it seems like the image name could be basically anything, some scripts
     # create images which look like hostnames, so any heuristic here is futile
-    docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}"
+    docker images --format '{{.Repository}}' | grep -q "^${1}$" ||
+        docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}$"
 }
 
 find_user_info() {
     local field="$1" user_arg="${2-}" group_arg="${3-}"
-    if [ "${root_dir-}" ]; then
-        [ -f "$root_dir/etc/passwd" ] || return
+    if [ "${spawn_dir-}" ]; then
+        [ -f "$spawn_dir/etc/passwd" ] || return
         while IFS=: read -r user pass uid gid gecos home shell; do
             if is_number "$user_arg" && [ "$uid" = "$user_arg" ] ||
                     [ "$user" = "$user_arg" ]; then
                 eval "echo \$$field"
                 break
             fi
-        done < "$root_dir/etc/passwd"
+        done < "$spawn_dir/etc/passwd"
     else
         case $user_arg in
             0|root)
@@ -401,7 +409,7 @@ EOF
 
 root_mkdir() {
     local uid="$spawn_user_uid" gid="$spawn_user_gid"
-    su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${root_dir:?}${1:?}"
+    su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${spawn_dir:?}${1:?}"
 }
 
 add_mountpoints() {
@@ -532,7 +540,7 @@ setup_runtime_env() {
     # config_dir=$(get_config_dir)
     # if [ "$config_dir" ]; then
     #     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
-    #     if [ "${root_dir-}" ]; then
+    #     if [ "${spawn_dir-}" ]; then
     #         root_mkdir "$config_dir"
     #     fi
     # fi
@@ -545,7 +553,7 @@ setup_system_env() {
 
     case $spawn_type in
         chroot)
-            bind_file "/etc/resolv.conf" "$root_dir/etc/resolv.conf"
+            bind_file "/etc/resolv.conf" "$spawn_dir/etc/resolv.conf"
             ;;
         nspawn)
             SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf:/etc/resolv.conf")"
@@ -555,7 +563,7 @@ setup_system_env() {
     if [ -f /etc/localtime ]; then
         case $spawn_type in
             chroot)
-                bind_file "/etc/localtime" "$root_dir/etc/localtime"
+                bind_file "/etc/localtime" "$spawn_dir/etc/localtime"
                 ;;
             nspawn)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime:/etc/localtime")"
@@ -625,7 +633,7 @@ setup_x11_env() {
 
     case $spawn_type in
         chroot)
-            bind_dir "$xsock_dir" "$root_dir$xsock_dir"
+            bind_dir "$xsock_dir" "$spawn_dir$xsock_dir"
             ;;
         *)
             X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
@@ -692,7 +700,7 @@ user existing inside the container by name"
 
     case $spawn_type in
         chroot)
-            bind_dir "$src" "$root_dir$dest"
+            bind_dir "$src" "$spawn_dir$dest"
             ;;
         *)
             HOME_A="$HOME_A$S$(make_bind_arg "$src:$dest")"
@@ -725,7 +733,7 @@ setup_bind_env() {
 
         case $spawn_type in
             chroot)
-                bind_dir "$from" "$root_dir$to"
+                bind_dir "$from" "$spawn_dir$to"
                 ;;
             *)
                 BIND_A="$BIND_A$S$(make_bind_arg "$from:$to${opts-}")"
@@ -759,20 +767,20 @@ extract_xauth() {
 }
 
 unlock() {
-    if [ "${root_dir-}" ]; then
-        unlock_dir "$root_dir"
+    if [ "${spawn_dir-}" ]; then
+        unlock_dir "$spawn_dir"
         sync
     fi
 }
 
 umount_all() {
-    if [ "${root_dir-}" ]; then
-        try_umount "$root_dir/sys" -R
-        try_umount "$root_dir/dev" -R
-        [ "${spawn_home-}" ] && try_umount "$root_dir$spawn_home"
-        [ "${xsock_dir-}"  ] && try_umount "$root_dir$xsock_dir"
-        try_umount "$root_dir/etc/localtime"
-        try_umount "$root_dir/etc/resolv.conf"
+    if [ "${spawn_dir-}" ]; then
+        try_umount "$spawn_dir/sys" -R
+        try_umount "$spawn_dir/dev" -R
+        [ "${spawn_home-}" ] && try_umount "$spawn_dir$spawn_home"
+        [ "${xsock_dir-}"  ] && try_umount "$spawn_dir$xsock_dir"
+        try_umount "$spawn_dir/etc/localtime"
+        try_umount "$spawn_dir/etc/resolv.conf"
     fi
     if [ "${my_runtime_dir-}" ]; then
         try_umount "$my_runtime_dir/pulse_sock"
@@ -807,45 +815,45 @@ spawn_root_chroot() {
 
     cmd=$(cat <<EOF
 set -e
-mount -t proc proc "$root_dir/proc"
+mount -t proc proc "$spawn_dir/proc"
 EOF
 )
 
     if [ "${share_devices-}" ]; then
-        su_run mkdir -p "$root_dir/dev" "$root_dir/sys"
-        su_run mount --rbind /dev "$root_dir/dev"
-        su_run mount --make-rslave "$root_dir/dev"
-        su_run mount --rbind /sys "$root_dir/sys"
-        su_run mount --make-rslave "$root_dir/sys"
-        add_mountpoints "$root_dir/dev" "$root_dir/sys"
+        su_run mkdir -p "$spawn_dir/dev" "$spawn_dir/sys"
+        su_run mount --rbind /dev "$spawn_dir/dev"
+        su_run mount --make-rslave "$spawn_dir/dev"
+        su_run mount --rbind /sys "$spawn_dir/sys"
+        su_run mount --make-rslave "$spawn_dir/sys"
+        add_mountpoints "$spawn_dir/dev" "$spawn_dir/sys"
     else
         cmd="$cmd; $(cat <<EOF
-mount -t tmpfs -o nosuid tmpfs "$root_dir/dev"
-mkdir -p "$root_dir/dev/shm" "$root_dir/dev/pts"
-mount -t tmpfs -o nosuid,nodev shm "$root_dir/dev/shm"
-mount -t devpts -o nosuid,noexec,gid=5,mode=620,ptmxmode=666,newinstance devpts "$root_dir/dev/pts"
-ln -snf pts/ptmx "$root_dir/dev/ptmx"
-ln -snf /proc/self/fd "$root_dir/dev/fd"
-ln -snf /proc/self/fd/0 "$root_dir/dev/stdin"
-ln -snf /proc/self/fd/1 "$root_dir/dev/stdout"
-ln -snf /proc/self/fd/2 "$root_dir/dev/stderr"
-mknod "$root_dir/dev/null" c 1 3
-mknod "$root_dir/dev/zero" c 1 5
-mknod "$root_dir/dev/random" c 1 8
-mknod "$root_dir/dev/urandom" c 1 9
-mknod "$root_dir/dev/console" c 5 1
-mknod "$root_dir/dev/tty" c 5 0
-chmod 666 "$root_dir/dev/null" "$root_dir/dev/zero" "$root_dir/dev/random" \
-    "$root_dir/dev/urandom" "$root_dir/dev/tty"
-chmod 600 "$root_dir/dev/console"
-mount -t sysfs sysfs "$root_dir/sys"
+mount -t tmpfs -o nosuid tmpfs "$spawn_dir/dev"
+mkdir -p "$spawn_dir/dev/shm" "$spawn_dir/dev/pts"
+mount -t tmpfs -o nosuid,nodev shm "$spawn_dir/dev/shm"
+mount -t devpts -o nosuid,noexec,gid=5,mode=620,ptmxmode=666,newinstance devpts "$spawn_dir/dev/pts"
+ln -snf pts/ptmx "$spawn_dir/dev/ptmx"
+ln -snf /proc/self/fd "$spawn_dir/dev/fd"
+ln -snf /proc/self/fd/0 "$spawn_dir/dev/stdin"
+ln -snf /proc/self/fd/1 "$spawn_dir/dev/stdout"
+ln -snf /proc/self/fd/2 "$spawn_dir/dev/stderr"
+mknod "$spawn_dir/dev/null" c 1 3
+mknod "$spawn_dir/dev/zero" c 1 5
+mknod "$spawn_dir/dev/random" c 1 8
+mknod "$spawn_dir/dev/urandom" c 1 9
+mknod "$spawn_dir/dev/console" c 5 1
+mknod "$spawn_dir/dev/tty" c 5 0
+chmod 666 "$spawn_dir/dev/null" "$spawn_dir/dev/zero" "$spawn_dir/dev/random" \
+    "$spawn_dir/dev/urandom" "$spawn_dir/dev/tty"
+chmod 600 "$spawn_dir/dev/console"
+mount -t sysfs sysfs "$spawn_dir/sys"
 EOF
 )"
     fi
 
     cmd="$cmd; $(cat <<EOF
-[ "${my_runtime_dir-}" ] && mount --rbind "${my_runtime_dir-}" "$root_dir${runtime_dir-}"
-$chroot $userspec "$root_dir" $(get_command)
+[ "${my_runtime_dir-}" ] && mount --rbind "${my_runtime_dir-}" "$spawn_dir${runtime_dir-}"
+$chroot $userspec "$spawn_dir" $(get_command)
 EOF
 )"
 
@@ -869,7 +877,7 @@ spawn_root_nspawn() {
 
     setup_env A
 
-    $E su_run systemd-nspawn $A ${spawn_args-} -D "$root_dir" -- /bin/sh -c "exec $(get_command)"
+    $E su_run systemd-nspawn $A ${spawn_args-} -D "$spawn_dir" -- /bin/sh -c "exec $(get_command)"
 }
 
 spawn_root_docker() {
@@ -889,10 +897,10 @@ spawn_root_docker() {
     if [ "$spawn_command" != "$cmd" ]; then
         spawn_command=$cmd
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} ${spawn_extra_args-} ${spawn_name-} /bin/sh -c "exec $(get_command)"
+            $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
     else
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} ${spawn_extra_args-} ${spawn_name-} $cmd
+            $A ${spawn_args-} "$spawn_image" $cmd
     fi
 }
 
@@ -910,10 +918,10 @@ if [ "$spawn_user" != "$spawn_user_a" ]; then
     spawn_user_b=${spawn_user#*:}
 fi
 
-spawn_user_name=$(find_user_info user "$spawn_user_a" "${spawn_user_b-}")
-spawn_user_uid=$(find_user_info uid "$spawn_user_a" "${spawn_user_b-}")
-spawn_user_gid=$(find_user_info gid "$spawn_user_a" "${spawn_user_b-}")
-spawn_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}")
+spawn_user_name=$(find_user_info user "$spawn_user_a" "${spawn_user_b-}") || true
+spawn_user_uid=$(find_user_info uid "$spawn_user_a" "${spawn_user_b-}") || true
+spawn_user_gid=$(find_user_info gid "$spawn_user_a" "${spawn_user_b-}") || true
+spawn_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}") || true
 
 unset spawn_user_a spawn_user_b
 
@@ -931,12 +939,12 @@ case $spawn_type in
         spawn_root_docker
         ;;
     nspawn|chroot)
-        if [ "${root_dir-}" ]; then
-            if is_locked "$root_dir"; then
-                die "the directory '$root_dir' is locked by another spawn instance, \
+        if [ "${spawn_dir-}" ]; then
+            if is_locked "$spawn_dir"; then
+                die "the directory '$spawn_dir' is locked by another spawn instance, \
                     use '--cleanup' option to remove stale locks"
             fi
-            lock_dir "$root_dir"
+            lock_dir "$spawn_dir"
 
             if [ "$spawn_type" = 'nspawn' ]; then
                 spawn_root_nspawn
