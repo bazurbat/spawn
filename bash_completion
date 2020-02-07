@@ -1,16 +1,23 @@
 ### Spawn completion definitions ###
 
+_spawn_complete_docker_images() {
+    if [ "$(command -v docker)" ]; then
+        docker images --format '{{.Repository}}:{{.Tag}}'
+    fi
+}
+
 _spawn_complete() {
     local cur prev
-    _get_comp_words_by_ref cur prev
+    _get_comp_words_by_ref -n : cur prev
 
-    local opts='--help --as-root --dry-run
+    local opts='--help -r --as-root -n --dry-run
+-i --image -d --dir -u --user
 --arch --bind-home --bind-dir
---with-ssh-agent --with-ssh-dir --with-gpg-agent
+--with-ssh-agent --with-ssh-dir
 --with-x11 --with-pulseaudio
 --to-stderr --share-devices
 --using-docker --using-nspawn --using-chroot
---unlock --cleanup --runtime-dir'
+--unlock --cleanup'
 
     compopt -o dirnames
 
