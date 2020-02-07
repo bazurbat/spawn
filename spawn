@@ -15,12 +15,14 @@ exec 3>&2
 
 show_usage() {
     cat <<EOF
-Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
+Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
 
   -h                    Show usage information
   --help                Show full help
   -r|--as-root          Use superuser inside the spawned root
   -n|--dry-run          Do not run any privileged commands - only print them
+  -i|--image            An image or Docker container name to run
+  -d|--dir              A directory to spawn or chroot into
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
@@ -41,16 +43,18 @@ EOF
 
 show_help() {
     cat <<EOF
-Usage: $program_name [OPTIONS...] <name|directory> [--] [COMMAND [ARGS...]]
+Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
 
   Spawns a new container or chroot and configures a shared environment.
 
-OPTIONS:
+OPTIONS
 
   -h                    Show usage information
   --help                Show full help
   -r|--as-root          Use superuser inside the spawned root
   -n|--dry-run          Do not run any privileged commands - only print them
+  -i|--image            An image or Docker container name to run
+  -d|--dir              A directory to spawn or chroot into
   --user <name>         Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
@@ -66,18 +70,30 @@ OPTIONS:
   --unlock              Remove the lock file
   --cleanup             Release stale mount points and unlock
 
-SYNOPSIS:
+SYNOPSIS
 
-  Unknown options before <name|directory> are passed to the selected launcher
-  as arguments (docker run, chroot, etc.). Everything else after
-  <name|directory> and optional '--' is considered the command to be invoked
-  inside the spawned container or chroot. If you want to pass an argument
-  requiring a value use the --name=value form (without whitespace).
+  The 'spawn' script runs the named Docker container or spawns/chroots into the
+  specified directory. If neither '--image' nor '--dir' option is provided then
+  the first non-option argument which is not a parameter to some other option
+  is assumed to specify what to spawn. If it points to an existing directory
+  then the script assumes you want to chroot/nspawn and run a container
+  otherwise. Use the '--' to explicitly mark the end of spawn's arguments.
 
-  If no '--using-*' option was given and the first non-option argument is an
-  existing directory then 'nspawn' will be used if 'systemd-nspawn' was found
-  in PATH, otherwise 'chroot'. If the argument is not a directory it is assumed
-  to be the name of a Docker container.
+  If the next argument after the name or '--' does not start with a '-' it,
+  along with the remaining command line will be passed to the spawned
+  environment as the command to run. Otherwise, if the next argument after the
+  name or '--' does start with a '-' it and the rest will be passed as options
+  to the underlying driver (docker run / systemd-nspawn). Use the '--' to
+  separate the arguments from the command in this case. The argument list could
+  be empty, use the '--' immediately after the name to pass the command
+  starting with '-' directly to the spawned environment (e.g. to container's
+  entrypoint script).
+
+  Specifying an '--image' option requests to spawn a Docker container,
+  specifying a '--dir' option requests to spawn chroot using the systemd-nspawn
+  if it is found or using chroot command otherwise. Specifying '--using-*'
+  option overrides any other heuristic for determining spawn type including the
+  existence of the '--image', '--dir' or checking for an existing directory. 
 
   If neither the '--as-root' nor the '--user' option is specified a user inside
   the spawned environment is assumed to be 'dev'.
@@ -109,7 +125,7 @@ SYNOPSIS:
   If either '--unlock' or '--cleanup' is specified all other options are
   ignored, the script exits immediately after the cleanup.
 
-NOTE:
+NOTE
 
   If you get "Connection failure: Protocol error" error or silent audio when
   trying to run PulseAudio applications inside the chroot, you need to disable
@@ -132,7 +148,7 @@ parse_command_line() {
             --help) show_help; exit ;;
             -i|--image)
                 spawn_image=${2-}; shift ;;
-            -d|--directory)
+            -d|--dir)
                 spawn_dir=${2-}; shift ;;
             -r|--as-root)
                 spawn_user='root' ;;
@@ -173,19 +189,21 @@ parse_command_line() {
                 if [ -z "${spawn_image-}" ] && [ -z "${spawn_directory-}" ]
                 then
                     name=${1}; shift
-                    break
-                fi ;;
+                fi
+                break ;;
         esac
         shift
     done
 
-    while [ $# -gt 0 ]; do
-        case $1 in
-            --) spawn_args=${spawn_command-}; spawn_command=; shift; break ;;
-             *) spawn_command=${spawn_command-}${S}${1} ;;
-        esac
-        shift
-    done
+    if [ "${1-}" ] && [ "${1}" != "${1#-}" ]; then
+        while [ $# -gt 0 ]; do
+            case $1 in
+                --) shift; break ;;
+                 *) spawn_args=${spawn_args-}${S}${1} ;;
+            esac
+            shift
+        done
+    fi
 
     while [ $# -gt 0 ]; do
         spawn_command=${spawn_command-}${S}${1}
@@ -233,7 +251,7 @@ validate_environment() {
             [ "${spawn_dir-}" ] ||
                 die "root directory is not specified"
             [ -d "$spawn_dir" ] ||
-                die "the specified root directory '$spawn_dir' is not exists"
+                die "the root directory '$spawn_dir' is not exists"
             [ -f "$spawn_dir/etc/passwd" ] ||
                 die "/etc/passwd is not exists in '$spawn_dir'"
             ;;
@@ -244,7 +262,7 @@ validate_environment() {
                 die "container name is not specified"
             if [ "${spawn_image-}" ]; then
                 docker_image_exists "$spawn_image" ||
-                    die "the specified container image '$spawn_image' does not exist"
+                    die "the container image '$spawn_image' does not exist"
             fi
     esac
 
