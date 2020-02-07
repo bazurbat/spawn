@@ -23,7 +23,7 @@ Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
   -n|--dry-run          Do not run any privileged commands - only print them
   -i|--image            An image or Docker container name to run
   -d|--dir              A directory to spawn or chroot into
-  --user <name>         Assume <name> user inside the container
+  -u|--user <name>      Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
   --bind-dir <dir>      Mount the specified directory inside the root
@@ -55,7 +55,7 @@ OPTIONS
   -n|--dry-run          Do not run any privileged commands - only print them
   -i|--image            An image or Docker container name to run
   -d|--dir              A directory to spawn or chroot into
-  --user <name>         Assume <name> user inside the container
+  -u|--user <name>      Assume <name> user inside the container
   --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
   --bind-dir <dir>      Mount the specified directory inside the root
@@ -93,7 +93,7 @@ SYNOPSIS
   specifying a '--dir' option requests to spawn chroot using the systemd-nspawn
   if it is found or using chroot command otherwise. Specifying '--using-*'
   option overrides any other heuristic for determining spawn type including the
-  existence of the '--image', '--dir' or checking for an existing directory. 
+  existence of the '--image', '--dir' or checking for an existing directory.
 
   If neither the '--as-root' nor the '--user' option is specified a user inside
   the spawned environment is assumed to be 'dev'.
@@ -165,6 +165,8 @@ parse_command_line() {
                 shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
+            --with-ssh-dir)
+                with_ssh_dir=1 ;;
             --with-x11)
                 with_x11=1 ;;
             --with-pulseaudio)
@@ -592,7 +594,7 @@ setup_system_env() {
     eval "${1}=\"\$${1}$S$SYS_A\""
 }
 
-setup_ssh_env() {
+setup_ssh_agent_env() {
     local SSH_A= uid=
 
     [ "${with_ssh_agent-}" ] || return 0
@@ -621,6 +623,25 @@ ID inside the container ($uid) but SSH agent socket sharing is requested -- \
 changing $SSH_AUTH_SOCK mode to world writeable/readable (666)"
         chmod 666 "$SSH_AUTH_SOCK"
     fi
+
+    eval "${1}=\"\$${1}$S$SSH_A\""
+}
+
+setup_ssh_dir_env() {
+    local SSH_A= uid=
+
+    [ "${with_ssh_dir-}" ] || return 0
+
+    [ "${spawn_home-}" ] ||
+        die "unable to automatically determine user's home directory inside the \
+spawned container to map the .ssh directory, please specify username with the \
+--user option"
+
+    case $spawn_type in
+        docker)
+            SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh:$spawn_home/.ssh")"
+            ;;
+    esac
 
     eval "${1}=\"\$${1}$S$SSH_A\""
 }
@@ -767,14 +788,15 @@ setup_bind_env() {
 }
 
 setup_env() {
-    add_user_arg      "$1"
-    setup_runtime_env "$1"
-    setup_system_env  "$1"
-    setup_ssh_env     "$1"
-    setup_x11_env     "$1"
-    setup_pa_env      "$1"
-    setup_home_env    "$1"
-    setup_bind_env    "$1"
+    add_user_arg        "$1"
+    setup_runtime_env   "$1"
+    setup_system_env    "$1"
+    setup_ssh_agent_env "$1"
+    setup_ssh_dir_env   "$1"
+    setup_x11_env       "$1"
+    setup_pa_env        "$1"
+    setup_home_env      "$1"
+    setup_bind_env      "$1"
 }
 
 extract_xauth() {
