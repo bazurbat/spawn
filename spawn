@@ -929,20 +929,13 @@ spawn_root_docker() {
 
     setup_env A
 
-    cmd=${spawn_command#%} cmd=${cmd#$S}
-
-    if [ "${to_stderr-}" -a "$cmd" ]; then
-        exec 1>&2
-    fi
-    [ "$cmd" ] || it_arg="-it"
-
-    if [ "$spawn_command" != "$cmd" ]; then
-        spawn_command=$cmd
+    if [ "${spawn_command-}" ]; then
+        $E docker run --rm $it_arg ${share_devices:+--privileged} \
+            $A ${spawn_args-} "$spawn_image" $spawn_command
+    else
+        it_arg="-it"
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
             $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
-    else
-        $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} "$spawn_image" $cmd
     fi
 }
 
@@ -977,6 +970,10 @@ if [ "${do_unlock-}" ]; then
 fi
 if [ "${do_cleanup-}" ]; then
     umount_all; unlock; exit
+fi
+
+if [ "${to_stderr-}" ]; then
+    exec 1>&2
 fi
 
 case $spawn_type in
