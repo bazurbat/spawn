@@ -95,8 +95,11 @@ SYNOPSIS
   option overrides any other heuristic for determining spawn type including the
   existence of the '--image', '--dir' or checking for an existing directory.
 
-  If neither the '--as-root' nor the '--user' option is specified a user inside
-  the spawned environment is assumed to be 'dev'.
+  If no user is specified the script will attempt to map the current user to
+  the spawned environment. In the case of root directory it will find out the
+  user info from root's /etc/passwd but in the case of containers it will not
+  be able to guess the username, so if it differs from the local username it is
+  necessary to set it explicitly.
 
   Use the '--bind-home' option to mount the specified directory as a user's home
   directory inside the chroot. For example, if you run:
@@ -151,10 +154,10 @@ parse_command_line() {
             -d|--dir)
                 spawn_dir=${2-}; shift ;;
             -r|--as-root)
-                spawn_user='root' ;;
+                spawn_user_arg='root' ;;
             -n|--dry-run) E='echo' ;;
             -u|--user)
-                spawn_user=${2-}; shift ;;
+                spawn_user_arg=${2-}; shift ;;
             --arch)
                 spawn_arch=${2-}; shift ;;
             --bind-home)
@@ -352,42 +355,41 @@ docker_image_exists() {
         docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}$"
 }
 
+find_passwd_user_info() {
+    local passwd="${1}" field="${2}" user="${3}"
+    [ -f "${passwd}" ] || return
+    while IFS=: read -r name pass uid gid gecos home shell; do
+        if is_number "$user" && [ "$user" = "$uid" ] ||
+           [ "$user" = "$name" ]
+        then
+            eval "echo \$$field"
+            break
+        fi
+    done < "$passwd"
+}
+
 find_user_info() {
-    local field="$1" user_arg="${2-}" group_arg="${3-}"
-    if [ "${spawn_dir-}" ]; then
-        [ -f "$spawn_dir/etc/passwd" ] || return
-        while IFS=: read -r user pass uid gid gecos home shell; do
-            if is_number "$user_arg" && [ "$uid" = "$user_arg" ] ||
-                    [ "$user" = "$user_arg" ]; then
-                eval "echo \$$field"
-                break
-            fi
-        done < "$spawn_dir/etc/passwd"
-    else
-        case $user_arg in
-            0|root)
+    local field="${1}" user_arg="${2}" group_arg="${3-}"
+    case $user_arg in
+        0|root)
+            case $field in
+                name) echo root ;;
+                 uid) echo 0 ;;
+                 gid) echo 0 ;;
+                home) echo /root ;;
+            esac ;;
+        *)
+            if [ "${spawn_dir-}" ]; then
+                find_passwd_user_info "${spawn_dir}/etc/passwd" "$field" "$user_arg"
+            else
                 case $field in
-                    user) echo root ;;
-                     uid) echo 0 ;;
-                     gid) echo ${group_arg:-0} ;;
-                    home) echo /root ;;
-                esac ;;
-            *)
-                if is_number "$user_arg"; then
-                    case $field in
-                        uid) echo $user_arg ;;
-                        gid) echo $group_arg ;;
-                    esac
-                else
-                    case $field in
-                        user) echo $user_arg ;;
-                         uid) echo $euid ;;
-                         gid) echo ${group_arg-$(id -g)} ;;
-                        home) echo /home/$user_arg ;;
-                    esac
-                fi ;;
-        esac
-    fi
+                    name) is_number "$user_arg" || echo "$user_arg" ;;
+                     uid) is_number "$user_arg" && echo "$user_arg" ;;
+                     gid) is_number "$group_arg" && echo "$group_arg" ;;
+                    home) is_number "$user_arg" || echo "/home/$user_arg" ;;
+                esac
+            fi ;;
+    esac
 }
 
 get_my_config_dir() {
@@ -482,11 +484,11 @@ unlock_dir() {
 add_user_arg() {
     local _A=
 
-    [ "${spawn_user-}" ] || return 0
+    [ "${spawn_user_arg-}" ] || return 0
 
     case $spawn_type in
         nspawn|docker)
-            _A="--user=$spawn_user" ;;
+            _A="--user=$spawn_user_arg" ;;
     esac
 
     eval "${1}=\"\$${1}$S$_A\""
@@ -537,10 +539,10 @@ setup_runtime_env() {
             if [ "${spawn_home-}" ]; then
                 _A="$_A$S$(make_env_arg HOME=$spawn_home)"
             fi
-            _A="$_A$S$(make_env_arg USER=$spawn_user)"
-            _A="$_A$S$(make_env_arg LOGNAME=$spawn_user)"
+            _A="$_A$S$(make_env_arg USER=$spawn_user_arg)"
+            _A="$_A$S$(make_env_arg LOGNAME=$spawn_user_arg)"
 
-            if [ "$spawn_user" = "root" ]; then
+            if [ "$spawn_user_arg" = "root" ]; then
                 _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
             else
                 _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
@@ -733,7 +735,7 @@ setup_home_env() {
             die "could not find home directory to bind to: please specify a \
 user existing inside the container by name"
         else
-            die "failed to find home directory for user: $spawn_user"
+            die "failed to find home directory for user: $spawn_user_arg"
         fi
     fi
 
@@ -849,7 +851,7 @@ spawn_root_chroot() {
 
     arch=$(make_setarch)
     # TODO: fix this to handle GID
-    userspec="--userspec=${spawn_user_name:-${spawn_user}}"
+    userspec="--userspec=${spawn_user_name:-${spawn_user_arg}}"
 
     setup_env env
 
@@ -946,26 +948,29 @@ spawn_root_docker() {
 
 if [ $# = 0 ]; then
     show_usage
-    exit
+    exit 0
 fi
-
-euid=${UID:-$(id -u)}
 
 parse_command_line "$@"
-: ${spawn_user=$euid}
-spawn_user_a=${spawn_user%:*}
-if [ "$spawn_user" != "$spawn_user_a" ]; then
-    spawn_user_b=${spawn_user#*:}
-fi
-
-spawn_user_name=$(find_user_info user "$spawn_user_a" "${spawn_user_b-}") || true
-spawn_user_uid=$(find_user_info uid "$spawn_user_a" "${spawn_user_b-}") || true
-spawn_user_gid=$(find_user_info gid "$spawn_user_a" "${spawn_user_b-}") || true
-spawn_home=$(find_user_info home "$spawn_user_a" "${spawn_user_b-}") || true
-
-unset spawn_user_a spawn_user_b
-
 validate_environment
+
+euid=${UID:-$(id -u)}
+: ${spawn_user_arg=$euid}
+
+# read does not read from a pipe because it can be in a subshell
+IFS=: read spawn_uid_arg spawn_gid_arg <<EOF
+$spawn_user_arg
+EOF
+
+spawn_user_name=$(find_user_info name "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+spawn_user_uid=$(find_user_info uid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+spawn_user_gid=$(find_user_info gid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+spawn_home=$(find_user_info home "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+
+: ${spawn_user_name:=$(id -un)}
+: ${spawn_user_uid:=$(id -u)}
+: ${spawn_user_gid:=$(id -g)}
+: ${spawn_home:=${HOME-}}
 
 if [ "${do_unlock-}" ]; then
     unlock; exit
