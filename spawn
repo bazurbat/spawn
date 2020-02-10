@@ -4,8 +4,10 @@ set -eu
 
 program_name="spawn"
 
+FS=$(printf '\nx'); FS=${FS%x}
 S=$(printf '\t')
 E=
+Q='{QUOTE}'
 
 xsock_dir='/tmp/.X11-unix'
 mountpoints=
@@ -163,9 +165,7 @@ parse_command_line() {
             --bind-home)
                 bind_home=${2-}; shift ;;
             --bind-dir)
-                bind_dir_args=${bind_dir_args-}$S${2-}
-                [ "${bind_dir_arg-}" ] || bind_dir_arg=${2-}
-                shift ;;
+                bind_dir_args=${bind_dir_args-}${FS}${2-}; shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
             --with-ssh-dir)
@@ -244,7 +244,7 @@ parse_command_line() {
 
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
-    bind_dir_args=${bind_dir_args+${bind_dir_args#$S}}
+    bind_dir_args=${bind_dir_args+${bind_dir_args#$FS}}
 }
 
 validate_environment() {
@@ -417,9 +417,11 @@ get_pa_socket() {
 }
 
 get_command() {
-    local IFS="$S" cd_cmd=cd
-    if [ "${bind_dir_arg-}" ]; then
-        cd_cmd="cd \"$(escape_quote "$bind_dir_arg")\""
+    local IFS="$S" cd_cmd
+    if [ "${spawn_wd-}" ]; then
+        cd_cmd="cd \"$(escape_quote "$spawn_wd")\""
+    else
+        cd_cmd="cd"
     fi
     if [ -z "${spawn_command-}" ]; then
         spawn_command="exec${S}/bin/bash${S}-l"
@@ -515,7 +517,8 @@ make_env_arg() {
 }
 
 make_bind_arg() {
-    local value="$1"
+    local from="${1}" to="${2}" opt="${3-}" value
+    value=${from}:${to}${opt:+:$opt}
     case $spawn_type in
         nspawn) echo "--bind=$value" ;;
         docker) echo "--volume=$value" ;;
@@ -551,7 +554,7 @@ setup_runtime_env() {
             root_mkdir "$runtime_dir"
             ;;
         *)
-            _A="$_A$S$(make_bind_arg $my_runtime_dir:$runtime_dir)"
+            _A="$_A$S$(make_bind_arg "$my_runtime_dir" "$runtime_dir")"
             ;;
 
     esac
@@ -578,7 +581,7 @@ setup_system_env() {
             bind_file "/etc/resolv.conf" "$spawn_dir/etc/resolv.conf"
             ;;
         nspawn)
-            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf:/etc/resolv.conf")"
+            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf" "/etc/resolv.conf")"
             ;;
     esac
 
@@ -588,7 +591,7 @@ setup_system_env() {
                 bind_file "/etc/localtime" "$spawn_dir/etc/localtime"
                 ;;
             nspawn)
-                SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime:/etc/localtime")"
+                SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime" "/etc/localtime")"
                 ;;
         esac
     fi
@@ -615,7 +618,7 @@ setup_ssh_agent_env() {
             bind_file "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
             ;;
         *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK:$runtime_dir/ssh")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$runtime_dir/ssh")"
             ;;
     esac
 
@@ -641,7 +644,7 @@ spawned container to map the .ssh directory, please specify username with the \
 
     case $spawn_type in
         docker)
-            SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh:$spawn_home/.ssh")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh" "$spawn_home/.ssh")"
             ;;
     esac
 
@@ -677,7 +680,7 @@ setup_x11_env() {
             bind_dir "$xsock_dir" "$spawn_dir$xsock_dir"
             ;;
         *)
-            X11_A="$X11_A$S$(make_bind_arg "$xsock_dir:$xsock_dir")"
+            X11_A="$X11_A$S$(make_bind_arg "$xsock_dir" "$xsock_dir")"
             ;;
     esac
 
@@ -710,7 +713,7 @@ setup_pa_env() {
             bind_file "$sock_file" "$my_runtime_dir/pulse_sock"
             ;;
         *)
-            PA_A="$PA_A$S$(make_bind_arg "$sock_file:$runtime_dir/pulse_sock")"
+            PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$runtime_dir/pulse_sock")"
             ;;
     esac
 
@@ -744,7 +747,7 @@ user existing inside the container by name"
             bind_dir "$src" "$spawn_dir$dest"
             ;;
         *)
-            HOME_A="$HOME_A$S$(make_bind_arg "$src:$dest")"
+            HOME_A="$HOME_A$S$(make_bind_arg "$src" "$dest")"
             ;;
     esac
 
@@ -752,35 +755,27 @@ user existing inside the container by name"
 }
 
 setup_bind_env() {
-    local IFS="$S" oldIFS="$IFS" OUT_A="$1" BIND_A= from to opt opts dir
+    local IFS="$S" OUT_A="$1" BIND_A= from to opt
 
-    [ "${bind_dir_arg-}" ] || return 0
+    [ "${bind_dir_args-}" ] || return 0
 
-    # FIXME: this naive splitting approach does not work with escaped ':', so
-    # binding paths containing ':' is not possible
-    for dir in ${bind_dir_args-}; do
-        IFS=:
-        set -- $dir
-        IFS="$oldIFS"
-        from="$1"; shift
-        if [ -z "${1-}" ]; then
-            to="${from}"
-        else
-            to="$1"; shift
-        fi
-        for opt do
-            opts="${opts-}:$opt"
-        done
-
+    bind_dir_args=$(echo "$bind_dir_args" | sed "s|\\\\:|$Q|g")
+    while IFS=: read from to opt; do
+        from=$(echo "$from" | sed "s|$Q|\\\\:|g")
+        to=$(echo "$to" | sed "s|$Q|\\\\:|g")
+        to=${to:-$from}
+        : ${spawn_wd:=$(eval echo "$to")}
         case $spawn_type in
             chroot)
                 bind_dir "$from" "$spawn_dir$to"
                 ;;
             *)
-                BIND_A="$BIND_A$S$(make_bind_arg "$from:$to${opts-}")"
+                BIND_A="$BIND_A$S$(make_bind_arg "$from" "$to" "${opt-}")"
                 ;;
         esac
-    done
+    done <<EOF
+${bind_dir_args-}
+EOF
 
     if [ "${to-}" ]; then
         BIND_A="$BIND_A$S$(make_env_arg "WD=$to")"
