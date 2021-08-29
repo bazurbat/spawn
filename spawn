@@ -590,7 +590,7 @@ setup_system_env() {
             chroot)
                 bind_file "/etc/localtime" "$spawn_dir/etc/localtime"
                 ;;
-            nspawn)
+            nspawn|docker)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime" "/etc/localtime")"
                 ;;
         esac
