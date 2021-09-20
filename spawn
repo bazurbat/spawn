@@ -466,9 +466,12 @@ try_umount() {
 
 get_lock_filename() {
     local dir="$(dirname "${1:?}")" name="$(basename "${1:?}")"
-    echo "${dir:?}/.${program_name:?}.${name:?}.lock"
-    # the scheme used by systemd-nspawn
-    # echo "${dir}/.#${name}.lck"
+    case $spawn_type in
+        chroot)
+            echo "${dir}/.${program_name}.${name}.lock" ;;
+        nspawn)
+            echo "${dir}/.#${name}.lck" ;;
+    esac
 }
 
 is_locked() {
@@ -835,14 +838,12 @@ cleanup() {
     if [ "${my_runtime_dir-}" ]; then
         rm -rf "$my_runtime_dir"
     fi
-
-    unlock
 }
 
 spawn_root_chroot() {
     local IFS="$S" arch= userspec= env= cmd=
 
-    trap cleanup EXIT
+    trap 'cleanup; unlock' EXIT
 
     arch=$(make_setarch)
     # TODO: fix this to handle GID
@@ -978,14 +979,14 @@ case $spawn_type in
     nspawn|chroot)
         if [ "${spawn_dir-}" ]; then
             if is_locked "$spawn_dir"; then
-                die "the directory '$spawn_dir' is locked by another spawn instance, \
+                die "the directory '$spawn_dir' is locked, \
                     use '--cleanup' option to remove stale locks"
             fi
-            lock_dir "$spawn_dir"
 
             if [ "$spawn_type" = 'nspawn' ]; then
                 spawn_root_nspawn
             else
+                lock_dir "$spawn_dir"
                 spawn_root_chroot
             fi
         else
