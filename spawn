@@ -583,9 +583,6 @@ setup_system_env() {
         chroot)
             bind_file "/etc/resolv.conf" "$spawn_dir/etc/resolv.conf"
             ;;
-        nspawn)
-            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf" "/etc/resolv.conf")"
-            ;;
     esac
 
     if [ -f /etc/localtime ]; then
