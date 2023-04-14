@@ -151,6 +151,8 @@ parse_command_line() {
             --) shift; break ;;
             -h) show_usage; exit ;;
             --help) show_help; exit ;;
+            --debug-args)
+                debug_args=1 ;;
             -i|--image)
                 spawn_image=${2-}; shift ;;
             -d|--dir)
@@ -174,6 +176,10 @@ parse_command_line() {
                 with_x11=1 ;;
             --with-pulseaudio)
                 with_pulseaudio=1 ;;
+            --with-pipewire)
+                with_pipewire=1 ;;
+            --with-dbus)
+                with_dbus=1 ;;
             --to-stderr)
                 to_stderr=1 ;;
             --share-devices)
@@ -245,6 +251,12 @@ parse_command_line() {
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
     bind_dir_args=${bind_dir_args+${bind_dir_args#$FS}}
+
+    if [ "${debug_args-}" ]; then
+        printf 'image: %s\n' "$spawn_image"
+        printf 'args: %s\n' "$spawn_args"
+        printf 'command: %s\n' "$spawn_command"
+    fi
 }
 
 validate_environment() {
@@ -720,6 +732,44 @@ setup_pa_env() {
     eval "${1}=\"\$${1}$S$PA_A\""
 }
 
+setup_pipewire_env() {
+    local PA_A= sock_file= cookie_file=
+
+    [ "${with_pipewire-}" ] || return 0
+
+    sock_file=${XDG_RUNTIME_DIR:-/run/user/$UID}/pipewire-0
+
+    if [ -S "$sock_file" ]; then
+        PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$runtime_dir/pipewire-0")"
+    fi
+
+    eval "${1}=\"\$${1}$S$PA_A\""
+}
+
+get_dbus_session_path() {
+    IFS='=' read -r prefix path <<EOF
+$DBUS_SESSION_BUS_ADDRESS
+EOF
+    printf '%s' "${path-}"
+}
+
+setup_dbus() {
+    local socket_path= target_path= env_arg= bind_arg=
+
+    [ "${with_dbus-}" ] || return 0
+
+    if [ "${DBUS_SESSION_BUS_ADDRESS-}" ]; then
+        socket_path=$(get_dbus_session_path)
+        if [ "${socket_path-}" ]; then
+            target_path="$runtime_dir/bus"
+            env_arg=$(make_env_arg DBUS_SESSION_BUS_ADDRESS="unix:path=$target_path")
+            bind_arg=$(make_bind_arg "$socket_path" "$target_path")
+        fi
+    fi
+
+    eval "${1}=\"\$${1}$S$env_arg$S$bind_arg\""
+}
+
 setup_home_env() {
     local HOME_A= src= dest=
 
@@ -792,6 +842,8 @@ setup_env() {
     setup_ssh_dir_env   "$1"
     setup_x11_env       "$1"
     setup_pa_env        "$1"
+    setup_pipewire_env  "$1"
+    setup_dbus          "$1"
     setup_home_env      "$1"
     setup_bind_env      "$1"
 }
@@ -924,7 +976,7 @@ spawn_root_docker() {
 
     if [ "${spawn_command-}" ]; then
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} "$spawn_image" $spawn_command
+            $A ${spawn_args-} ${spawn_image-} $spawn_command
     else
         it_arg="-it"
         $E docker run --rm $it_arg ${share_devices:+--privileged} \
