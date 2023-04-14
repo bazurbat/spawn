@@ -164,6 +164,8 @@ parse_command_line() {
                 spawn_user_arg=${2-}; shift ;;
             --arch)
                 spawn_arch=${2-}; shift ;;
+            --name)
+                spawn_name=${2-}; shift ;;
             --bind-home)
                 bind_home=${2-}; shift ;;
             --bind-dir)
@@ -180,6 +182,8 @@ parse_command_line() {
                 with_pipewire=1 ;;
             --with-dbus)
                 with_dbus=1 ;;
+            --with-cmd)
+                with_cmd=1 ;;
             --to-stderr)
                 to_stderr=1 ;;
             --share-devices)
@@ -496,6 +500,28 @@ lock_dir() {
 
 unlock_dir() {
     su_run rm -f "$(get_lock_filename "${1:?}")"
+}
+
+setup_user_env() {
+    local arg="$1" uid= gid=
+
+    : ${spawn_home:=${HOME-}}
+
+    [ "$arg" ] || return 0
+
+    # read does not read from a pipe because it can be in a subshell
+    IFS=: read uid gid <<EOF
+$arg
+EOF
+
+    spawn_user_name=$(find_user_info name "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+    spawn_user_uid=$(find_user_info uid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+    spawn_user_gid=$(find_user_info gid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+    spawn_home=$(find_user_info home "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+
+    : ${spawn_user_name:=$(id -un)}
+    : ${spawn_user_uid:=$(id -u)}
+    : ${spawn_user_gid:=$(id -g)}
 }
 
 add_user_arg() {
@@ -974,14 +1000,14 @@ spawn_root_docker() {
 
     setup_env A
 
-    if [ "${spawn_command-}" ]; then
-        $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} ${spawn_image-} $spawn_command
-    else
+    if [ -z "${spawn_command-}" -a -t 1 ]; then
         it_arg="-it"
-        $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
     fi
+
+    $E docker run --rm $it_arg \
+        ${spawn_name:+--name=$spawn_name} \
+        ${share_devices:+--privileged} \
+        $A ${spawn_args-} "$spawn_image" $spawn_command
 }
 
 if [ $# = 0 ]; then
@@ -989,26 +1015,13 @@ if [ $# = 0 ]; then
     exit 0
 fi
 
-parse_command_line "$@"
-validate_environment
-
 euid=${UID:-$(id -u)}
-: ${spawn_user_arg=$euid}
 
-# read does not read from a pipe because it can be in a subshell
-IFS=: read spawn_uid_arg spawn_gid_arg <<EOF
-$spawn_user_arg
-EOF
+parse_command_line "$@"
 
-spawn_user_name=$(find_user_info name "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_user_uid=$(find_user_info uid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_user_gid=$(find_user_info gid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_home=$(find_user_info home "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+setup_user_env "${spawn_user_arg-}"
 
-: ${spawn_user_name:=$(id -un)}
-: ${spawn_user_uid:=$(id -u)}
-: ${spawn_user_gid:=$(id -g)}
-: ${spawn_home:=${HOME-}}
+validate_environment
 
 if [ "${do_unlock-}" ]; then
     unlock; exit
