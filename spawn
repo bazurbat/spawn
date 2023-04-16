@@ -636,7 +636,7 @@ setup_system_env() {
         esac
     fi
 
-    if [ "$share_memory" ]; then
+    if [ "${share_memory-}" ]; then
         case $spawn_type in
             docker)
                 SYS_A="$SYS_A$S$(make_bind_arg /dev/shm /dev/shm)"
