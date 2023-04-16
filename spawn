@@ -168,7 +168,7 @@ parse_command_line() {
                 spawn_name=${2-}; shift ;;
             --bind-home)
                 bind_home=${2-}; shift ;;
-            --bind-dir)
+            --bind-dir|--bind)
                 bind_dir_args=${bind_dir_args-}${FS}${2-}; shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
@@ -188,6 +188,8 @@ parse_command_line() {
                 to_stderr=1 ;;
             --share-devices)
                 share_devices=1 ;;
+            --share-memory)
+                share_memory=1 ;;
             --using-docker)
                 spawn_type='docker' ;;
             --using-nspawn)
@@ -634,6 +636,14 @@ setup_system_env() {
         esac
     fi
 
+    if [ "$share_memory" ]; then
+        case $spawn_type in
+            docker)
+                SYS_A="$SYS_A$S$(make_bind_arg /dev/shm /dev/shm)"
+                ;;
+        esac
+    fi
+
     eval "${1}=\"\$${1}$S$SYS_A\""
 }
 
@@ -1000,7 +1010,7 @@ spawn_root_docker() {
 
     setup_env A
 
-    if [ -z "${spawn_command-}" -a -t 1 ]; then
+    if [ -t 1 ]; then
         it_arg="-it"
     fi
 
