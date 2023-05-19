@@ -36,7 +36,6 @@ Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
   --share-devices       Share devices with the host
   --using-docker        Use Docker to spawn the named container
   --using-nspawn        Use 'systemd-nspawn' to chroot
-  --using-chroot        Use the regular 'chroot'
   --unlock              Remove the lock file
   --cleanup             Release stale mount points and unlock
 
@@ -47,7 +46,7 @@ show_help() {
     cat <<EOF
 Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
 
-  Spawns a new container or chroot and configures a shared environment.
+  Spawns a new container and configures a shared environment.
 
 OPTIONS
 
@@ -68,18 +67,17 @@ OPTIONS
   --share-devices       Share devices with the host
   --using-docker        Use Docker to spawn the named container
   --using-nspawn        Use 'systemd-nspawn' to chroot
-  --using-chroot        Use the regular 'chroot'
   --unlock              Remove the lock file
   --cleanup             Release stale mount points and unlock
 
 SYNOPSIS
 
-  The 'spawn' script runs the named Docker container or spawns/chroots into the
+  The 'spawn' script runs the named Docker container or spawns into the
   specified directory. If neither '--image' nor '--dir' option is provided then
   the first non-option argument which is not a parameter to some other option
   is assumed to specify what to spawn. If it points to an existing directory
-  then the script assumes you want to chroot/nspawn and run a container
-  otherwise. Use the '--' to explicitly mark the end of spawn's arguments.
+  then the script assumes you want to nspawn and run a container otherwise. Use
+  the '--' to explicitly mark the end of spawn's arguments.
 
   If the next argument after the name or '--' does not start with a '-' it,
   along with the remaining command line will be passed to the spawned
@@ -93,9 +91,9 @@ SYNOPSIS
 
   Specifying an '--image' option requests to spawn a Docker container,
   specifying a '--dir' option requests to spawn chroot using the systemd-nspawn
-  if it is found or using chroot command otherwise. Specifying '--using-*'
-  option overrides any other heuristic for determining spawn type including the
-  existence of the '--image', '--dir' or checking for an existing directory.
+  if it is found. Specifying '--using-*' option overrides any other heuristic
+  for determining spawn type including the existence of the '--image', '--dir'
+  or checking for an existing directory.
 
   If no user is specified the script will attempt to map the current user to
   the spawned environment. In the case of root directory it will find out the
@@ -196,8 +194,6 @@ parse_command_line() {
                 spawn_type='podman' ;;
             --using-nspawn)
                 spawn_type='nspawn' ;;
-            --using-chroot)
-                spawn_type='chroot' ;;
             --unlock)
                 do_unlock=1 ;;
             --cleanup)
@@ -232,7 +228,7 @@ parse_command_line() {
     done
 
     case ${spawn_type-} in
-        chroot|nspawn)
+        nspawn)
             : ${spawn_dir=$name} ;;
         docker|podman)
             : ${spawn_image=$name} ;;
@@ -253,8 +249,6 @@ parse_command_line() {
     if [ "$spawn_type" = 'dir...' ]; then
         if [ "$(command -v systemd-nspawn)" ]; then
             spawn_type='nspawn'
-        else
-            spawn_type='chroot'
         fi
     fi
 
@@ -274,7 +268,7 @@ validate_environment() {
         die "neither container image nor directory is specified"
     fi
     case ${spawn_type-} in
-        chroot|nspawn)
+        nspawn)
             [ "${spawn_dir-}" ] ||
                 die "root directory is not specified"
             [ -d "$spawn_dir" ] ||
@@ -297,27 +291,6 @@ validate_environment() {
         nspawn)
             [ "$(command -v systemd-nspawn)" ] ||
                 die "systemd-nspawn command was not found"
-            ;;
-        chroot)
-            [ "$(command -v dirname)" ] ||
-                die "dirname command was not found"
-            [ "$(command -v realpath)" ] ||
-                die "realpath command was not found"
-            [ "$(command -v awk)" ] ||
-                die "awk command was not found"
-            [ "$(command -v tac)" ] ||
-                die "tac command was not found"
-            [ "$(command -v unshare)" ] ||
-                die "unshare command was not found"
-
-            chroot=$(command -v chroot)
-            if [ -z "$chroot" ]; then
-                chroot="/usr/sbin/chroot"
-            fi
-            if ! [ -x "$chroot" ]; then
-                die "chroot command was not found"
-            fi
-
             ;;
     esac
 
@@ -528,7 +501,6 @@ make_setarch() {
 make_env_arg() {
     local value="$1"
     case $spawn_type in
-        chroot) echo "$value" ;;
         nspawn) echo "--setenv=$value" ;;
         docker|podman) echo "--env=$value" ;;
     esac
@@ -577,22 +549,6 @@ setup_runtime_env() {
     spawn_runtime_dir=$(mktemp -dp "/tmp" spawn.XXXXXXXXXX)
 
     case $spawn_type in
-        chroot)
-            _A="$_A$S$(make_env_arg TERM=${TERM-})"
-            if [ "${spawn_home-}" ]; then
-                _A="$_A$S$(make_env_arg HOME=$spawn_home)"
-            fi
-            _A="$_A$S$(make_env_arg USER=$spawn_user_arg)"
-            _A="$_A$S$(make_env_arg LOGNAME=$spawn_user_arg)"
-
-            if [ "$spawn_user_arg" = "root" ]; then
-                _A="$_A$S$(make_env_arg PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)"
-            else
-                _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
-            fi
-
-            root_mkdir "$target_runtime_dir"
-            ;;
         *)
             _A="$_A$S$(make_bind_arg "$spawn_runtime_dir" "$target_runtime_dir")"
             ;;
@@ -608,9 +564,6 @@ setup_system_env() {
     local SYS_A=
 
     case $spawn_type in
-        chroot)
-            bind_file "/etc/resolv.conf" "$spawn_dir/etc/resolv.conf"
-            ;;
         nspawn)
             SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf" "/etc/resolv.conf")"
             ;;
@@ -618,9 +571,6 @@ setup_system_env() {
 
     if [ -f /etc/localtime ]; then
         case $spawn_type in
-            chroot)
-                bind_file "/etc/localtime" "$spawn_dir/etc/localtime"
-                ;;
             nspawn)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime" "/etc/localtime")"
                 ;;
@@ -645,9 +595,6 @@ setup_ssh_agent_env() {
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$target_runtime_dir/ssh")"
 
     case $spawn_type in
-        chroot)
-            bind_file "$SSH_AUTH_SOCK" "$spawn_runtime_dir/ssh"
-            ;;
         *)
             SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$target_runtime_dir/ssh")"
             ;;
@@ -708,9 +655,6 @@ setup_x11_env() {
     xsock_file="$xsock_dir/X${DISPLAY#:}"
 
     case $spawn_type in
-        chroot)
-            bind_dir "$xsock_dir" "$spawn_dir$xsock_dir"
-            ;;
         *)
             X11_A="$X11_A$S$(make_bind_arg "$xsock_file" "$xsock_file")"
             ;;
@@ -741,9 +685,6 @@ setup_pa_env() {
     PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$target_runtime_dir/pulse_cookie")"
 
     case $spawn_type in
-        chroot)
-            bind_file "$sock_file" "$spawn_runtime_dir/pulse_sock"
-            ;;
         *)
             PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$target_runtime_dir/pulse_sock")"
             ;;
@@ -775,9 +716,6 @@ user existing inside the container by name"
     fi
 
     case $spawn_type in
-        chroot)
-            bind_dir "$src" "$spawn_dir$dest"
-            ;;
         *)
             HOME_A="$HOME_A$S$(make_bind_arg "$src" "$dest")"
             ;;
@@ -798,9 +736,6 @@ setup_bind_env() {
         to=${to:-$from}
         : ${spawn_wd:=$(eval echo "$to")}
         case $spawn_type in
-            chroot)
-                bind_dir "$from" "$spawn_dir$to"
-                ;;
             *)
                 BIND_A="$BIND_A$S$(make_bind_arg "$from" "$to" "${opt-}")"
                 ;;
@@ -871,71 +806,6 @@ cleanup() {
     fi
 
     unlock
-}
-
-spawn_root_chroot() {
-    local IFS="$S" arch= userspec= env= cmd=
-
-    trap cleanup EXIT
-
-    arch=$(make_setarch)
-    # TODO: fix this to handle GID
-    userspec="--userspec=${spawn_user_name:-${spawn_user_arg}}"
-
-    setup_env env
-
-    cmd=$(cat <<EOF
-set -e
-mount -t proc proc "$spawn_dir/proc"
-EOF
-)
-
-    if [ "${share_devices-}" ]; then
-        su_run mkdir -p "$spawn_dir/dev" "$spawn_dir/sys"
-        su_run mount --rbind /dev "$spawn_dir/dev"
-        su_run mount --make-rslave "$spawn_dir/dev"
-        su_run mount --rbind /sys "$spawn_dir/sys"
-        su_run mount --make-rslave "$spawn_dir/sys"
-        add_mountpoints "$spawn_dir/dev" "$spawn_dir/sys"
-    else
-        cmd="$cmd; $(cat <<EOF
-mount -t tmpfs -o nosuid tmpfs "$spawn_dir/dev"
-mkdir -p "$spawn_dir/dev/shm" "$spawn_dir/dev/pts"
-mount -t tmpfs -o nosuid,nodev shm "$spawn_dir/dev/shm"
-mount -t devpts -o nosuid,noexec,gid=5,mode=620,ptmxmode=666,newinstance devpts "$spawn_dir/dev/pts"
-ln -snf pts/ptmx "$spawn_dir/dev/ptmx"
-ln -snf /proc/self/fd "$spawn_dir/dev/fd"
-ln -snf /proc/self/fd/0 "$spawn_dir/dev/stdin"
-ln -snf /proc/self/fd/1 "$spawn_dir/dev/stdout"
-ln -snf /proc/self/fd/2 "$spawn_dir/dev/stderr"
-mknod "$spawn_dir/dev/null" c 1 3
-mknod "$spawn_dir/dev/zero" c 1 5
-mknod "$spawn_dir/dev/random" c 1 8
-mknod "$spawn_dir/dev/urandom" c 1 9
-mknod "$spawn_dir/dev/console" c 5 1
-mknod "$spawn_dir/dev/tty" c 5 0
-chmod 666 "$spawn_dir/dev/null" "$spawn_dir/dev/zero" "$spawn_dir/dev/random" \
-    "$spawn_dir/dev/urandom" "$spawn_dir/dev/tty"
-chmod 600 "$spawn_dir/dev/console"
-mount -t sysfs sysfs "$spawn_dir/sys"
-EOF
-)"
-    fi
-
-    cmd="$cmd; $(cat <<EOF
-[ "${spawn_runtime_dir-}" ] && mount --rbind "${spawn_runtime_dir-}" "$spawn_dir${target_runtime_dir-}"
-$chroot $userspec "$spawn_dir" $(get_command)
-EOF
-)"
-
-    $E su_run $arch env - $env unshare -mpf /bin/sh -c "$cmd"
-    cat <<EOF
-$program_name warning: if you see the message below similar to:
-
-    [1]+  Stopped                 spawn ...
-
-you need to bring the script into the foreground using the 'fg' command and enter the password as requested to let the cleanup to finish. Alternatively, install systemd-nspawn or run spawn as root to avoid this problem.
-EOF
 }
 
 spawn_root_nspawn() {
@@ -1051,7 +921,7 @@ case $spawn_type in
     podman)
         spawn_root_podman
         ;;
-    nspawn|chroot)
+    nspawn)
         if [ "${spawn_dir-}" ]; then
             if is_locked "$spawn_dir"; then
                 die "the directory '$spawn_dir' is locked by another spawn instance, \
@@ -1061,8 +931,6 @@ case $spawn_type in
 
             if [ "$spawn_type" = 'nspawn' ]; then
                 spawn_root_nspawn
-            else
-                spawn_root_chroot
             fi
         else
             die "chroot directory is not specified"
