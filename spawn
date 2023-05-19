@@ -10,7 +10,6 @@ E=
 Q='{QUOTE}'
 
 xsock_dir='/tmp/.X11-unix'
-mountpoints=
 
 # saving the stderr to allow showing error messages from subshells
 exec 3>&2
@@ -36,8 +35,6 @@ Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
   --share-devices       Share devices with the host
   --using-docker        Use Docker to spawn the named container
   --using-nspawn        Use 'systemd-nspawn' to chroot
-  --unlock              Remove the lock file
-  --cleanup             Release stale mount points and unlock
 
 EOF
 }
@@ -67,8 +64,6 @@ OPTIONS
   --share-devices       Share devices with the host
   --using-docker        Use Docker to spawn the named container
   --using-nspawn        Use 'systemd-nspawn' to chroot
-  --unlock              Remove the lock file
-  --cleanup             Release stale mount points and unlock
 
 SYNOPSIS
 
@@ -118,15 +113,6 @@ SYNOPSIS
   spawning the chroot it will be the current working directory and also
   available as '\$WD' in the environment. It can be the same directory which is
   specified for '--bind-home'.
-
-  Use the '--unlock' option to remove stale lock files from the root directory
-  after an unexpected system shutdown, for example.
-
-  The '--cleanup' option can be used to unmount the directories left by other
-  spawn invocations.
-
-  If either '--unlock' or '--cleanup' is specified all other options are
-  ignored, the script exits immediately after the cleanup.
 
 NOTE
 
@@ -194,10 +180,6 @@ parse_command_line() {
                 spawn_type='podman' ;;
             --using-nspawn)
                 spawn_type='nspawn' ;;
-            --unlock)
-                do_unlock=1 ;;
-            --cleanup)
-                do_cleanup=1 ;;
             --debug-command)
                 debug_command=1 ;;
             -*)
@@ -420,58 +402,6 @@ get_command() {
     cat <<EOF
 /bin/sh -c 'IFS=$(printf \"\\t\"); cmd="$(escape_quote "$spawn_command")"; $cd_cmd && \$cmd'
 EOF
-}
-
-root_mkdir() {
-    local uid="$spawn_user_uid" gid="$spawn_user_gid"
-    su_run install -o "${uid:?}" -g "${gid:?}" ${2:+"-m$2"} -d "${spawn_dir:?}${1:?}"
-}
-
-add_mountpoints() {
-    for arg; do
-        mountpoints="${arg}${S}${mountpoints}"
-    done
-}
-
-bind_mount() {
-    su_run mount --bind "${1:?}" "${2:?}"
-    add_mountpoints "$2"
-}
-
-bind_file() {
-    su_run touch "${2:?}"
-    bind_mount "$1" "$2"
-}
-
-bind_dir() {
-    su_run mkdir -p "$2"
-    bind_mount "$1" "$2"
-}
-
-try_umount() {
-    local path="${1:?}" arg="${2-}"
-    if su_run mountpoint -q "$path"; then
-        su_run umount $arg "$path" || true
-    fi
-}
-
-get_lock_filename() {
-    local dir="$(dirname "${1:?}")" name="$(basename "${1:?}")"
-    echo "${dir:?}/.${program_name:?}.${name:?}.lock"
-    # the scheme used by systemd-nspawn
-    # echo "${dir}/.#${name}.lck"
-}
-
-is_locked() {
-    test -f "$(get_lock_filename "${1:?}")"
-}
-
-lock_dir() {
-    su_run touch "$(get_lock_filename "${1:?}")"
-}
-
-unlock_dir() {
-    su_run rm -f "$(get_lock_filename "${1:?}")"
 }
 
 add_user_arg() {
@@ -772,40 +702,10 @@ extract_xauth() {
     xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
 }
 
-unlock() {
-    if [ "${spawn_dir-}" ]; then
-        unlock_dir "$spawn_dir"
-        sync
-    fi
-}
-
-umount_all() {
-    if [ "${spawn_dir-}" ]; then
-        try_umount "$spawn_dir/sys" -R
-        try_umount "$spawn_dir/dev" -R
-        [ "${spawn_home-}" ] && try_umount "$spawn_dir$spawn_home"
-        [ "${xsock_dir-}"  ] && try_umount "$spawn_dir$xsock_dir"
-        try_umount "$spawn_dir/etc/localtime"
-        try_umount "$spawn_dir/etc/resolv.conf"
-    fi
-    if [ "${spawn_runtime_dir-}" ]; then
-        try_umount "$spawn_runtime_dir/pulse_sock"
-        try_umount "$spawn_runtime_dir/ssh"
-        rm -rf "$spawn_runtime_dir"
-    fi
-}
-
 cleanup() {
-    local IFS="$S"
-
-    for path in $mountpoints; do
-        su_run umount -R "$path" || true
-    done
     if [ "${spawn_runtime_dir-}" ]; then
         rm -rf "$spawn_runtime_dir"
     fi
-
-    unlock
 }
 
 spawn_root_nspawn() {
@@ -903,13 +803,6 @@ fi
 : ${spawn_user_gid:=$(id -g)}
 : ${spawn_home:=${HOME-}}
 
-if [ "${do_unlock-}" ]; then
-    unlock; exit
-fi
-if [ "${do_cleanup-}" ]; then
-    umount_all; unlock; exit
-fi
-
 if [ "${to_stderr-}" ]; then
     exec 1>&2
 fi
@@ -923,16 +816,6 @@ case $spawn_type in
         ;;
     nspawn)
         if [ "${spawn_dir-}" ]; then
-            if is_locked "$spawn_dir"; then
-                die "the directory '$spawn_dir' is locked by another spawn instance, \
-                    use '--cleanup' option to remove stale locks"
-            fi
-            lock_dir "$spawn_dir"
-
-            if [ "$spawn_type" = 'nspawn' ]; then
-                spawn_root_nspawn
-            fi
-        else
-            die "chroot directory is not specified"
+            spawn_root_nspawn
         fi ;;
 esac
