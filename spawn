@@ -25,7 +25,6 @@ Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
   -i|--image            An image or Docker container name to run
   -d|--dir              A directory to spawn or chroot into
   -u|--user <name>      Assume <name> user inside the container
-  --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
   --bind-dir <dir>      Mount the specified directory inside the root
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
@@ -54,7 +53,6 @@ OPTIONS
   -i|--image            An image or Docker container name to run
   -d|--dir              A directory to spawn or chroot into
   -u|--user <name>      Assume <name> user inside the container
-  --arch <arch>         Set architecture reported by uname(2)
   --bind-home <dir>     Bind the specified directory as a user's home directory
   --bind-dir <dir>      Mount the specified directory inside the root
   --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
@@ -152,8 +150,6 @@ parse_command_line() {
                 spawn_cap_admin=1 ;;
             --name)
                 spawn_name=${2-}; shift ;;
-            --arch)
-                spawn_arch=${2-}; shift ;;
             --bind-home)
                 bind_home=${2-}; shift ;;
             --bind-dir|--bind)
@@ -415,17 +411,6 @@ add_user_arg() {
     esac
 
     eval "${1}=\"\$${1}$S$_A\""
-}
-
-make_setarch() {
-    case ${spawn_arch-} in
-        x86|i?86)
-            echo "linux32" ;;
-        x86-64|x86_64|amd64)
-            echo "linux64" ;;
-        '') ;;
-         *) die "unknown arch '$spawn_arch'" ;;
-    esac
 }
 
 make_env_arg() {
