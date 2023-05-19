@@ -155,16 +155,24 @@ parse_command_line() {
                 spawn_image=${2-}; shift ;;
             -d|--dir)
                 spawn_dir=${2-}; shift ;;
+            -n|--dry-run) E='echo' ;;
             -r|--as-root)
                 spawn_user_arg='root' ;;
-            -n|--dry-run) E='echo' ;;
             -u|--user)
                 spawn_user_arg=${2-}; shift ;;
+            --uid)
+                spawn_user_uid=${2-}; shift ;;
+            --gid)
+                spawn_user_gid=${2-}; shift ;;
+            --as-admin)
+                spawn_cap_admin=1 ;;
+            --name)
+                spawn_name=${2-}; shift ;;
             --arch)
                 spawn_arch=${2-}; shift ;;
             --bind-home)
                 bind_home=${2-}; shift ;;
-            --bind-dir)
+            --bind-dir|--bind)
                 bind_dir_args=${bind_dir_args-}${FS}${2-}; shift ;;
             --with-ssh-agent)
                 with_ssh_agent=1 ;;
@@ -176,10 +184,16 @@ parse_command_line() {
                 with_pulseaudio=1 ;;
             --to-stderr)
                 to_stderr=1 ;;
+            --share-ipc)
+                share_ipc=1 ;;
+            --share-gpu)
+                share_gpu=1 ;;
             --share-devices)
                 share_devices=1 ;;
             --using-docker)
                 spawn_type='docker' ;;
+            --using-podman)
+                spawn_type='podman' ;;
             --using-nspawn)
                 spawn_type='nspawn' ;;
             --using-chroot)
@@ -188,6 +202,8 @@ parse_command_line() {
                 do_unlock=1 ;;
             --cleanup)
                 do_cleanup=1 ;;
+            --debug-command)
+                debug_command=1 ;;
             -*)
                 die "unrecognized argument: $1" ;;
             *)
@@ -218,7 +234,7 @@ parse_command_line() {
     case ${spawn_type-} in
         chroot|nspawn)
             : ${spawn_dir=$name} ;;
-        docker)
+        docker|podman)
             : ${spawn_image=$name} ;;
         '')
             if [ "${spawn_image-}" ]; then
@@ -245,6 +261,12 @@ parse_command_line() {
     spawn_args=${spawn_args+${spawn_args#$S}}
     spawn_command=${spawn_command+${spawn_command#$S}}
     bind_dir_args=${bind_dir_args+${bind_dir_args#$FS}}
+
+    if [ "${debug_command:-}" ]; then
+        echo "spawn_image: $spawn_image"
+        echo "spawn_args: $spawn_args"
+        echo "spawn_command: $spawn_command"
+    fi
 }
 
 validate_environment() {
@@ -392,20 +414,16 @@ find_user_info() {
     esac
 }
 
-get_my_config_dir() {
+get_host_xdg_config_dir() {
     echo "${XDG_CONFIG_HOME:-${HOME:?}/.config}${1:+/$1}"
 }
 
-get_config_dir() {
-    local home_dir="$spawn_home" config_dir=
-    if [ "$home_dir" ]; then
-        config_dir="${home_dir:?}/.config"
-        echo "$config_dir${1:+/$1}"
-    fi
+get_host_xdg_runtime_dir() {
+    echo "${XDG_RUNTIME_DIR:-/run/user/${host_user_uid}}"
 }
 
-get_runtime_dir() {
-    echo "${XDG_RUNTIME_DIR:-/run/user/${euid}}"
+get_target_xdg_runtime_dir() {
+    echo "/run/user/${spawn_user_uid}"
 }
 
 get_pa_socket() {
@@ -489,7 +507,7 @@ add_user_arg() {
     [ "${spawn_user_arg-}" ] || return 0
 
     case $spawn_type in
-        nspawn|docker)
+        nspawn|docker|podman)
             _A="--user=$spawn_user_arg" ;;
     esac
 
@@ -512,7 +530,7 @@ make_env_arg() {
     case $spawn_type in
         chroot) echo "$value" ;;
         nspawn) echo "--setenv=$value" ;;
-        docker) echo "--env=$value" ;;
+        docker|podman) echo "--env=$value" ;;
     esac
 }
 
@@ -521,20 +539,42 @@ make_bind_arg() {
     value=${from}:${to}${opt:+:$opt}
     case $spawn_type in
         nspawn) echo "--bind=$value" ;;
-        docker) echo "--volume=$value" ;;
+        docker|podman) echo "--volume=$value" ;;
     esac
 }
 
+setup_caps() {
+    local _A=
+
+    if [ "${spawn_cap_admin:-}" ]; then
+        _A="$_A$S--cap-add=SYS_ADMIN"
+    fi
+
+    eval "${1}=\"\$${1}$S$_A\""
+}
+
+setup_devices() {
+    local _A=
+
+    if [ "${share_gpu:-}" ]; then
+        _A="$_A$S--device=/dev/dri/card0"
+    fi
+
+    eval "${1}=\"\$${1}$S$_A\""
+}
+
 setup_runtime_env() {
-    local _A= uid= gid= config_dir=
+    local _A= uid= gid= runtime_dir=
 
     [ -z "${with_ssh_agent-}"  ] &&
     [ -z "${with_x11-}"        ] &&
     [ -z "${with_pulseaudio-}" ] &&
         return 0
 
-    runtime_dir=$(get_runtime_dir)
-    my_runtime_dir=$(mktemp -dp "$runtime_dir" spawn.XXXXXXXXXX)
+    runtime_dir=$(get_host_xdg_runtime_dir)
+
+    target_runtime_dir=$(get_target_xdg_runtime_dir)
+    spawn_runtime_dir=$(mktemp -dp "/tmp" spawn.XXXXXXXXXX)
 
     case $spawn_type in
         chroot)
@@ -551,24 +591,15 @@ setup_runtime_env() {
                 _A="$_A$S$(make_env_arg PATH=/usr/local/bin:/usr/bin:/bin)"
             fi
 
-            root_mkdir "$runtime_dir"
+            root_mkdir "$target_runtime_dir"
             ;;
         *)
-            _A="$_A$S$(make_bind_arg "$my_runtime_dir" "$runtime_dir")"
+            _A="$_A$S$(make_bind_arg "$spawn_runtime_dir" "$target_runtime_dir")"
             ;;
 
     esac
 
-    _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$runtime_dir")"
-
-    # temporary disabling to allow u be a number
-    # config_dir=$(get_config_dir)
-    # if [ "$config_dir" ]; then
-    #     _A="$_A$S$(make_env_arg "XDG_CONFIG_HOME=$config_dir")"
-    #     if [ "${spawn_dir-}" ]; then
-    #         root_mkdir "$config_dir"
-    #     fi
-    # fi
+    _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$target_runtime_dir")"
 
     eval "${1}=\"\$${1}$S$_A\""
 }
@@ -611,14 +642,14 @@ setup_ssh_agent_env() {
 
     uid=$spawn_user_uid
 
-    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$runtime_dir/ssh")"
+    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$target_runtime_dir/ssh")"
 
     case $spawn_type in
         chroot)
-            bind_file "$SSH_AUTH_SOCK" "$my_runtime_dir/ssh"
+            bind_file "$SSH_AUTH_SOCK" "$spawn_runtime_dir/ssh"
             ;;
         *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$runtime_dir/ssh")"
+            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$target_runtime_dir/ssh")"
             ;;
     esac
 
@@ -643,7 +674,7 @@ spawned container to map the .ssh directory, please specify username with the \
 --user option"
 
     case $spawn_type in
-        docker)
+        docker|podman)
             SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh" "$spawn_home/.ssh")"
             ;;
     esac
@@ -652,7 +683,7 @@ spawned container to map the .ssh directory, please specify username with the \
 }
 
 setup_x11_env() {
-    local X11_A= xauth_file=
+    local X11_A= xauth_file= xsock_file=
 
     [ "${with_x11-}" ] || return 0
 
@@ -661,26 +692,27 @@ setup_x11_env() {
     [ -d "$xsock_dir" ] ||
         die "X11 socket directory '$xsock_dir' is not exists"
 
-    xauth_file="$my_runtime_dir/Xauthority"
+    # disable Qt's usage of shared memory when not sharing IPC
+    if [ -z "${share_ipc:-}" ]; then
+        X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
+    fi
+
+    xauth_file="$spawn_runtime_dir/Xauthority"
     touch "$xauth_file"
     extract_xauth "$xauth_file"
     chmod 666 "$xauth_file"
 
     X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
-    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$runtime_dir/Xauthority")"
+    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$target_runtime_dir/Xauthority")"
 
-    # disable Qt's usage of shared memory which we do not expose
-    X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
-
-    # Exposing whole X11 socket directory is probably a bad idea, hopefully
-    # assuming that most users are running single X11 instance.
+    xsock_file="$xsock_dir/X${DISPLAY#:}"
 
     case $spawn_type in
         chroot)
             bind_dir "$xsock_dir" "$spawn_dir$xsock_dir"
             ;;
         *)
-            X11_A="$X11_A$S$(make_bind_arg "$xsock_dir" "$xsock_dir")"
+            X11_A="$X11_A$S$(make_bind_arg "$xsock_file" "$xsock_file")"
             ;;
     esac
 
@@ -699,21 +731,21 @@ setup_pa_env() {
     [ -S "$sock_file" ] ||
         die "PulseAudio socket '$sock_file' is not exists or is not a socket"
 
-    cookie_file=$(get_my_config_dir pulse)/cookie
+    cookie_file=$(get_host_xdg_config_dir pulse)/cookie
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
-    cp "$cookie_file" "$my_runtime_dir/pulse_cookie"
-    chmod 666 "$my_runtime_dir/pulse_cookie"
+    cp "$cookie_file" "$spawn_runtime_dir/pulse_cookie"
+    chmod 666 "$spawn_runtime_dir/pulse_cookie"
 
-    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$runtime_dir/pulse_sock")"
-    PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$runtime_dir/pulse_cookie")"
+    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$target_runtime_dir/pulse_sock")"
+    PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$target_runtime_dir/pulse_cookie")"
 
     case $spawn_type in
         chroot)
-            bind_file "$sock_file" "$my_runtime_dir/pulse_sock"
+            bind_file "$sock_file" "$spawn_runtime_dir/pulse_sock"
             ;;
         *)
-            PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$runtime_dir/pulse_sock")"
+            PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$target_runtime_dir/pulse_sock")"
             ;;
     esac
 
@@ -786,6 +818,8 @@ EOF
 
 setup_env() {
     add_user_arg        "$1"
+    setup_caps          "$1"
+    setup_devices       "$1"
     setup_runtime_env   "$1"
     setup_system_env    "$1"
     setup_ssh_agent_env "$1"
@@ -819,10 +853,10 @@ umount_all() {
         try_umount "$spawn_dir/etc/localtime"
         try_umount "$spawn_dir/etc/resolv.conf"
     fi
-    if [ "${my_runtime_dir-}" ]; then
-        try_umount "$my_runtime_dir/pulse_sock"
-        try_umount "$my_runtime_dir/ssh"
-        rm -rf "$my_runtime_dir"
+    if [ "${spawn_runtime_dir-}" ]; then
+        try_umount "$spawn_runtime_dir/pulse_sock"
+        try_umount "$spawn_runtime_dir/ssh"
+        rm -rf "$spawn_runtime_dir"
     fi
 }
 
@@ -832,8 +866,8 @@ cleanup() {
     for path in $mountpoints; do
         su_run umount -R "$path" || true
     done
-    if [ "${my_runtime_dir-}" ]; then
-        rm -rf "$my_runtime_dir"
+    if [ "${spawn_runtime_dir-}" ]; then
+        rm -rf "$spawn_runtime_dir"
     fi
 
     unlock
@@ -889,7 +923,7 @@ EOF
     fi
 
     cmd="$cmd; $(cat <<EOF
-[ "${my_runtime_dir-}" ] && mount --rbind "${my_runtime_dir-}" "$spawn_dir${runtime_dir-}"
+[ "${spawn_runtime_dir-}" ] && mount --rbind "${spawn_runtime_dir-}" "$spawn_dir${target_runtime_dir-}"
 $chroot $userspec "$spawn_dir" $(get_command)
 EOF
 )"
@@ -924,14 +958,47 @@ spawn_root_docker() {
 
     setup_env A
 
-    if [ "${spawn_command-}" ]; then
-        $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} "$spawn_image" $spawn_command
-    else
-        it_arg="-it"
-        $E docker run --rm $it_arg ${share_devices:+--privileged} \
-            $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
+    if [ -t 1 ]; then
+        it_arg='-it'
     fi
+
+    $E docker run --rm $it_arg \
+        ${spawn_name:+--name=${spawn_name}} \
+        ${share_ipc:+--ipc=host} \
+        ${share_devices:+--privileged} \
+        $A \
+        ${spawn_args-} \
+        "${spawn_image}" \
+        $spawn_command
+
+    # if [ "${spawn_command-}" ]; then
+    #     $E docker run --rm $it_arg ${share_devices:+--privileged} \
+    #         $A ${spawn_args-} "$spawn_image" $spawn_command
+    # else
+    #     it_arg="-it"
+    #     $E docker run --rm $it_arg ${share_devices:+--privileged} \
+    #         $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
+    # fi
+}
+
+spawn_root_podman() {
+    local IFS="$S" A= it_arg= cmd=
+
+    trap cleanup EXIT
+
+    setup_env A
+
+    if [ -t 1 ]; then
+        it_arg='-it'
+    fi
+
+    $E podman run --rm $it_arg \
+        ${share_devices:+--privileged} \
+        ${spawn_name:+--name=${spawn_name}} \
+        $A \
+        ${spawn_args-} \
+        "${spawn_image}" \
+        $spawn_command
 }
 
 if [ $# = 0 ]; then
@@ -943,8 +1010,13 @@ parse_command_line "$@"
 validate_environment
 
 euid=${UID:-$(id -u)}
-: ${spawn_user_arg=$euid}
 
+host_user_name=$(id -un)
+host_user_uid=$(id -u)
+host_user_gid=$(id -g)
+host_user_home=${HOME-}
+
+if [ "${spawn_user_arg:-}" ]; then
 # read does not read from a pipe because it can be in a subshell
 IFS=: read spawn_uid_arg spawn_gid_arg <<EOF
 $spawn_user_arg
@@ -954,6 +1026,7 @@ spawn_user_name=$(find_user_info name "$spawn_uid_arg" "${spawn_gid_arg-}") || t
 spawn_user_uid=$(find_user_info uid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
 spawn_user_gid=$(find_user_info gid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
 spawn_home=$(find_user_info home "$spawn_uid_arg" "${spawn_gid_arg-}") || true
+fi
 
 : ${spawn_user_name:=$(id -un)}
 : ${spawn_user_uid:=$(id -u)}
@@ -974,6 +1047,9 @@ fi
 case $spawn_type in
     docker)
         spawn_root_docker
+        ;;
+    podman)
+        spawn_root_podman
         ;;
     nspawn|chroot)
         if [ "${spawn_dir-}" ]; then
