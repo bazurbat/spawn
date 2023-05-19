@@ -133,6 +133,16 @@ parse_command_line() {
             --) shift; break ;;
             -h) show_usage; exit ;;
             --help) show_help; exit ;;
+            --using-docker)
+                spawn_mode='docker'
+                ;;
+            --using-podman)
+                spawn_mode='docker'
+                spawn_type='podman'
+                ;;
+            --using-nspawn)
+                spawn_mode='nspawn'
+                ;;
             -i|--image)
                 spawn_image=${2-}; shift ;;
             -d|--dir)
@@ -170,12 +180,6 @@ parse_command_line() {
                 share_gpu=1 ;;
             --share-devices)
                 share_devices=1 ;;
-            --using-docker)
-                spawn_type='docker' ;;
-            --using-podman)
-                spawn_type='podman' ;;
-            --using-nspawn)
-                spawn_type='nspawn' ;;
             --debug-command)
                 debug_command=1 ;;
             -*)
@@ -205,28 +209,28 @@ parse_command_line() {
         shift
     done
 
-    case ${spawn_type-} in
+    case ${spawn_mode-} in
         nspawn)
             : ${spawn_dir=$name} ;;
-        docker|podman)
+        docker)
             : ${spawn_image=$name} ;;
         '')
             if [ "${spawn_image-}" ]; then
-                spawn_type='docker'
+                spawn_mode='docker'
             elif [ "${spawn_dir-}" ]; then
-                spawn_type='dir...'
+                spawn_mode='dir...'
             elif [ -d "$name" ]; then
-                spawn_type='dir...'
+                spawn_mode='dir...'
                 spawn_dir=${name}
             else
-                spawn_type='docker'
+                spawn_mode='docker'
                 spawn_image=${name}
             fi ;;
     esac
 
-    if [ "$spawn_type" = 'dir...' ]; then
+    if [ "$spawn_mode" = 'dir...' ]; then
         if [ "$(command -v systemd-nspawn)" ]; then
-            spawn_type='nspawn'
+            spawn_mode='nspawn'
         fi
     fi
 
@@ -242,10 +246,11 @@ parse_command_line() {
 }
 
 validate_environment() {
-    if [ -z "${spawn_image-}" -a -z "${spawn_dir-}" ]; then
-        die "neither container image nor directory is specified"
+    if ! $(command -v "$spawn_mode_command" >/dev/null); then
+        die "could not find the required command '$spawn_mode_command' for the selected spawn mode"
     fi
-    case ${spawn_type-} in
+
+    case ${spawn_mode-} in
         nspawn)
             [ "${spawn_dir-}" ] ||
                 die "root directory is not specified"
@@ -254,29 +259,6 @@ validate_environment() {
             [ -f "$spawn_dir/etc/passwd" ] ||
                 die "/etc/passwd is not exists in '$spawn_dir'"
             ;;
-        docker)
-            [ "$(command -v docker)" ] ||
-                die "docker command was not found"
-            [ "${spawn_image-}" ] ||
-                die "container name is not specified"
-            if [ "${spawn_image-}" ]; then
-                docker_image_exists "$spawn_image" ||
-                    die "the container image '$spawn_image' does not exist"
-            fi
-    esac
-
-    case ${spawn_type-} in
-        nspawn)
-            [ "$(command -v systemd-nspawn)" ] ||
-                die "systemd-nspawn command was not found"
-            ;;
-    esac
-
-    case ${spawn_type-} in
-        nspawn)
-            if [ "${share_devices-}" ]; then
-                die "the '--share-devices' option is not supported for nspawn"
-            fi ;;
     esac
 }
 
@@ -405,8 +387,8 @@ add_user_arg() {
 
     [ "${spawn_user_arg-}" ] || return 0
 
-    case $spawn_type in
-        nspawn|docker|podman)
+    case $spawn_mode in
+        nspawn|docker)
             _A="--user=$spawn_user_arg" ;;
     esac
 
@@ -415,18 +397,18 @@ add_user_arg() {
 
 make_env_arg() {
     local value="$1"
-    case $spawn_type in
+    case $spawn_mode in
         nspawn) echo "--setenv=$value" ;;
-        docker|podman) echo "--env=$value" ;;
+        docker) echo "--env=$value" ;;
     esac
 }
 
 make_bind_arg() {
     local from="${1}" to="${2}" opt="${3-}" value
     value=${from}:${to}${opt:+:$opt}
-    case $spawn_type in
+    case $spawn_mode in
         nspawn) echo "--bind=$value" ;;
-        docker|podman) echo "--volume=$value" ;;
+        docker) echo "--volume=$value" ;;
     esac
 }
 
@@ -463,7 +445,7 @@ setup_runtime_env() {
     target_runtime_dir=$(get_target_xdg_runtime_dir)
     spawn_runtime_dir=$(mktemp -dp "/tmp" spawn.XXXXXXXXXX)
 
-    case $spawn_type in
+    case $spawn_mode in
         *)
             _A="$_A$S$(make_bind_arg "$spawn_runtime_dir" "$target_runtime_dir")"
             ;;
@@ -478,14 +460,14 @@ setup_runtime_env() {
 setup_system_env() {
     local SYS_A=
 
-    case $spawn_type in
+    case $spawn_mode in
         nspawn)
             SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf" "/etc/resolv.conf")"
             ;;
     esac
 
     if [ -f /etc/localtime ]; then
-        case $spawn_type in
+        case $spawn_mode in
             nspawn)
                 SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime" "/etc/localtime")"
                 ;;
@@ -509,7 +491,7 @@ setup_ssh_agent_env() {
 
     SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$target_runtime_dir/ssh")"
 
-    case $spawn_type in
+    case $spawn_mode in
         *)
             SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$target_runtime_dir/ssh")"
             ;;
@@ -535,8 +517,8 @@ setup_ssh_dir_env() {
 spawned container to map the .ssh directory, please specify username with the \
 --user option"
 
-    case $spawn_type in
-        docker|podman)
+    case $spawn_mode in
+        docker)
             SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh" "$spawn_home/.ssh")"
             ;;
     esac
@@ -569,7 +551,7 @@ setup_x11_env() {
 
     xsock_file="$xsock_dir/X${DISPLAY#:}"
 
-    case $spawn_type in
+    case $spawn_mode in
         *)
             X11_A="$X11_A$S$(make_bind_arg "$xsock_file" "$xsock_file")"
             ;;
@@ -599,7 +581,7 @@ setup_pa_env() {
     PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$target_runtime_dir/pulse_sock")"
     PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$target_runtime_dir/pulse_cookie")"
 
-    case $spawn_type in
+    case $spawn_mode in
         *)
             PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$target_runtime_dir/pulse_sock")"
             ;;
@@ -622,7 +604,7 @@ setup_home_env() {
     [ -d "$src" ] ||
         die "the source directory to bind home does not exist: $src"
     if [ -z "$dest" ]; then
-        if [ "$spawn_type" = "docker" ]; then
+        if [ "$spawn_mode" = "docker" ]; then
             die "could not find home directory to bind to: please specify a \
 user existing inside the container by name"
         else
@@ -630,7 +612,7 @@ user existing inside the container by name"
         fi
     fi
 
-    case $spawn_type in
+    case $spawn_mode in
         *)
             HOME_A="$HOME_A$S$(make_bind_arg "$src" "$dest")"
             ;;
@@ -650,7 +632,7 @@ setup_bind_env() {
         to=$(echo "$to" | sed "s|$Q|\\\\:|g")
         to=${to:-$from}
         : ${spawn_wd:=$(eval echo "$to")}
-        case $spawn_type in
+        case $spawn_mode in
             *)
                 BIND_A="$BIND_A$S$(make_bind_arg "$from" "$to" "${opt-}")"
                 ;;
@@ -706,7 +688,7 @@ spawn_root_nspawn() {
     $E su_run systemd-nspawn $A ${spawn_args-} -D "$spawn_dir" -- /bin/sh -c "exec $(get_command)"
 }
 
-spawn_root_docker() {
+spawn_using_docker() {
     local IFS="$S" A= it_arg= cmd=
 
     trap cleanup EXIT
@@ -717,39 +699,10 @@ spawn_root_docker() {
         it_arg='-it'
     fi
 
-    $E docker run --rm $it_arg \
+    $E $spawn_mode_command run --rm $it_arg \
         ${spawn_name:+--name=${spawn_name}} \
         ${share_ipc:+--ipc=host} \
         ${share_devices:+--privileged} \
-        $A \
-        ${spawn_args-} \
-        "${spawn_image}" \
-        $spawn_command
-
-    # if [ "${spawn_command-}" ]; then
-    #     $E docker run --rm $it_arg ${share_devices:+--privileged} \
-    #         $A ${spawn_args-} "$spawn_image" $spawn_command
-    # else
-    #     it_arg="-it"
-    #     $E docker run --rm $it_arg ${share_devices:+--privileged} \
-    #         $A ${spawn_args-} "$spawn_image" /bin/sh -c "exec $(get_command)"
-    # fi
-}
-
-spawn_root_podman() {
-    local IFS="$S" A= it_arg= cmd=
-
-    trap cleanup EXIT
-
-    setup_env A
-
-    if [ -t 1 ]; then
-        it_arg='-it'
-    fi
-
-    $E podman run --rm $it_arg \
-        ${share_devices:+--privileged} \
-        ${spawn_name:+--name=${spawn_name}} \
         $A \
         ${spawn_args-} \
         "${spawn_image}" \
@@ -762,6 +715,18 @@ if [ $# = 0 ]; then
 fi
 
 parse_command_line "$@"
+
+spawn_mode_command=$spawn_mode
+case ${spawn_mode-} in
+    docker)
+        case ${spawn_type-} in
+            podman) spawn_mode_command=podman ;;
+                 *) spawn_mode_command=docker ;;
+        esac ;;
+    nspawn)
+        spawn_mode_command=systemd-nspawn ;;
+esac
+
 validate_environment
 
 euid=${UID:-$(id -u)}
@@ -792,13 +757,8 @@ if [ "${to_stderr-}" ]; then
     exec 1>&2
 fi
 
-case $spawn_type in
-    docker)
-        spawn_root_docker
-        ;;
-    podman)
-        spawn_root_podman
-        ;;
+case $spawn_mode in
+    docker) spawn_using_docker ;;
     nspawn)
         if [ "${spawn_dir-}" ]; then
             spawn_root_nspawn
