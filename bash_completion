@@ -1,8 +1,9 @@
 ### Spawn completion definitions ###
 
 _spawn_complete_docker_images() {
+    local format='{{.Repository}}:{{.Tag}}'
     if [ "$(command -v docker)" ]; then
-        docker images --format '{{.Repository}}:{{.Tag}}'
+        docker image ls --no-trunc --format "$format" | grep -v '<none>$'
     fi
 }
 
@@ -10,55 +11,43 @@ _spawn_complete() {
     local cur prev
     _get_comp_words_by_ref -n : cur prev
 
-    local opts='--help -r --as-root -n --dry-run
--i --image -d --dir -u --user
---arch --bind-home --bind-dir
---with-ssh-agent --with-ssh-dir
---with-x11 --with-pulseaudio
---to-stderr --share-devices
---using-docker --using-nspawn --using-chroot
---unlock --cleanup'
-
-    compopt -o dirnames
+    local options=(
+        -h -n
+        --help
+        --dry-run
+        --using-docker
+        --using-podman
+        --name
+        --as-root
+        --user
+        --bind
+        --bind-home
+        --with-gpu
+        --with-x11
+        --with-pulseaudio
+        --with-keepassxc
+    )
 
     case $prev in
-        spawn)
-            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
-            return ;;
-        --arch)
-            COMPREPLY=($(compgen -W "x86 x86-64" -- "$cur"))
-            return ;;
-        --bind-home)
+        --name|--user)
             COMPREPLY=()
             return ;;
-    esac
-
-    case $cur in
-        -*)
-            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        --bind|--bind-home)
+            COMPREPLY=($(compgen -o dirnames -- "$cur"))
             return ;;
     esac
-}
-
-_init_ubuntu_root_complete() {
-    local cur prev
-    _get_comp_words_by_ref cur prev
-
-    local opts='--help --init --default --dev \
---with-backports --with-i386 --with-dev-tools \
---with-java8 --with-wine --with-perforce \
---add-user --skip-update'
-
-    compopt -o dirnames
 
     case $cur in
         -*)
-            COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+            COMPREPLY=($(compgen -W "${options[*]}" -- "$cur"))
+            return ;;
+        *)
+            COMPREPLY=($(compgen -W "$(_spawn_complete_docker_images)" -- "$cur"))
+            __ltrim_colon_completions "$cur"
             return ;;
     esac
 }
 
 complete -F _spawn_complete spawn
-complete -F _init_ubuntu_root_complete init-ubuntu-root
 
 ### End of Spawn completion definitions ###

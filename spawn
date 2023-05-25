@@ -1,271 +1,44 @@
 #!/bin/sh
 
-set -eu
+set -euf
 
 program_name="spawn"
-
-FS=$(printf '\nx'); FS=${FS%x}
-S=$(printf '\t')
-E=
-Q='{QUOTE}'
-
 xsock_dir='/tmp/.X11-unix'
 
-# saving the stderr to allow showing error messages from subshells
+S=$(printf '\t')
+
 exec 3>&2
 
 show_usage() {
     cat <<EOF
-Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
+Usage: $program_name [OPTIONS...] <image> [COMMAND [ARGS...]]
 
-  -h                    Show usage information
-  --help                Show full help
-  -r|--as-root          Use superuser inside the spawned root
-  -n|--dry-run          Do not run any privileged commands - only print them
-  -i|--image            An image or Docker container name to run
-  -d|--dir              A directory to spawn or chroot into
-  -u|--user <name>      Assume <name> user inside the container
-  --bind-home <dir>     Bind the specified directory as a user's home directory
-  --bind-dir <dir>      Mount the specified directory inside the root
-  --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
-  --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --to-stderr           Redirect all container command output to stderr
-  --share-devices       Share devices with the host
-  --using-docker        Use Docker to spawn the named container
-  --using-nspawn        Use 'systemd-nspawn' to chroot
+  -h, --help            Show usage information
+  -n, --dry-run         Do not run, only print the resulting command
+  --using-docker        Use docker run (default)
+  --using-podman        Use podman run
+  --name <name>         Set the name of the container
+  --as-root             Pass --user=root to the runner
+  --user <user>         Set user's HOME to /home/<user>
+  --bind <path>         Mount the specified directory inside the container
+  --bind-home <path>    Mount the specified directory as /home/<user>
+  --with-gpu            Share host's GPU (/dev/dri)
+  --with-x11            Share host's X11 socket and pass Xauthority
+  --with-pulseaudio     Share host's PulseAudio socket and cookie
+  --with-keepassxc      Share host's KeePassXC socket
 
 EOF
 }
 
-show_help() {
-    cat <<EOF
-Usage: $program_name [OPTIONS...] <name|directory> [COMMAND [ARGS...]]
-
-  Spawns a new container and configures a shared environment.
-
-OPTIONS
-
-  -h                    Show usage information
-  --help                Show full help
-  -r|--as-root          Use superuser inside the spawned root
-  -n|--dry-run          Do not run any privileged commands - only print them
-  -i|--image            An image or Docker container name to run
-  -d|--dir              A directory to spawn or chroot into
-  -u|--user <name>      Assume <name> user inside the container
-  --bind-home <dir>     Bind the specified directory as a user's home directory
-  --bind-dir <dir>      Mount the specified directory inside the root
-  --with-ssh-agent      Pass SSH_AUTH_SOCK variable and bind the socket
-  --with-x11            Pass DISPLAY, XAUTHORITY and bind $xsock_dir
-  --with-pulseaudio     Set PULSE_SERVER and pass Pulseaudio socket
-  --to-stderr           Redirect all container command output to stderr
-  --share-devices       Share devices with the host
-  --using-docker        Use Docker to spawn the named container
-  --using-nspawn        Use 'systemd-nspawn' to chroot
-
-SYNOPSIS
-
-  The 'spawn' script runs the named Docker container or spawns into the
-  specified directory. If neither '--image' nor '--dir' option is provided then
-  the first non-option argument which is not a parameter to some other option
-  is assumed to specify what to spawn. If it points to an existing directory
-  then the script assumes you want to nspawn and run a container otherwise. Use
-  the '--' to explicitly mark the end of spawn's arguments.
-
-  If the next argument after the name or '--' does not start with a '-' it,
-  along with the remaining command line will be passed to the spawned
-  environment as the command to run. Otherwise, if the next argument after the
-  name or '--' does start with a '-' it and the rest will be passed as options
-  to the underlying driver (docker run / systemd-nspawn). Use the '--' to
-  separate the arguments from the command in this case. The argument list could
-  be empty, use the '--' immediately after the name to pass the command
-  starting with '-' directly to the spawned environment (e.g. to container's
-  entrypoint script).
-
-  Specifying an '--image' option requests to spawn a Docker container,
-  specifying a '--dir' option requests to spawn chroot using the systemd-nspawn
-  if it is found. Specifying '--using-*' option overrides any other heuristic
-  for determining spawn type including the existence of the '--image', '--dir'
-  or checking for an existing directory.
-
-  If no user is specified the script will attempt to map the current user to
-  the spawned environment. In the case of root directory it will find out the
-  user info from root's /etc/passwd but in the case of containers it will not
-  be able to guess the username, so if it differs from the local username it is
-  necessary to set it explicitly.
-
-  Use the '--bind-home' option to mount the specified directory as a user's home
-  directory inside the chroot. For example, if you run:
-
-      spawn --bind-home $HOME/somedir root
-
-  The directory '$HOME/somedir' will become '/home/dev' inside the spawned
-  chroot (assuming the default 'dev' user is not overridden). Use this to have a
-  separate clean profile and settings from the host or to share the same home
-  directory between different chrooted environments.
-
-  Use the '--bind-dir' option to mount the specified directory inside the chroot
-  at the same path as outside. Run build commands relative to this directory to
-  have compile_commands.json generated with the absolute paths directly usable
-  by editor and language servers outside of the chrooted environment. After
-  spawning the chroot it will be the current working directory and also
-  available as '\$WD' in the environment. It can be the same directory which is
-  specified for '--bind-home'.
-
-NOTE
-
-  If you get "Connection failure: Protocol error" error or silent audio when
-  trying to run PulseAudio applications inside the chroot, you need to disable
-  communication through shared memory for the client. Add:
-
-    enable-shm = no
-
-  to "/etc/pulse/client.conf" inside the root directory.
-
-EOF
-}
-
-parse_command_line() {
-    local name=
-
-    while [ $# -gt 0 ]; do
-        case $1 in
-            --) shift; break ;;
-            -h) show_usage; exit ;;
-            --help) show_help; exit ;;
-            --using-docker)
-                spawn_mode='docker'
-                ;;
-            --using-podman)
-                spawn_mode='docker'
-                spawn_type='podman'
-                ;;
-            --using-nspawn)
-                spawn_mode='nspawn'
-                ;;
-            -i|--image)
-                spawn_image=${2-}; shift ;;
-            -d|--dir)
-                spawn_dir=${2-}; shift ;;
-            -n|--dry-run) E='echo' ;;
-            -r|--as-root)
-                spawn_user_arg='root' ;;
-            -u|--user)
-                spawn_user_arg=${2-}; shift ;;
-            --uid)
-                spawn_user_uid=${2-}; shift ;;
-            --gid)
-                spawn_user_gid=${2-}; shift ;;
-            --as-admin)
-                spawn_cap_admin=1 ;;
-            --name)
-                spawn_name=${2-}; shift ;;
-            --bind-home)
-                bind_home=${2-}; shift ;;
-            --bind-dir|--bind)
-                bind_dir_args=${bind_dir_args-}${FS}${2-}; shift ;;
-            --with-ssh-agent)
-                with_ssh_agent=1 ;;
-            --with-ssh-dir)
-                with_ssh_dir=1 ;;
-            --with-x11)
-                with_x11=1 ;;
-            --with-pulseaudio)
-                with_pulseaudio=1 ;;
-            --to-stderr)
-                to_stderr=1 ;;
-            --share-ipc)
-                share_ipc=1 ;;
-            --share-gpu)
-                share_gpu=1 ;;
-            --share-devices)
-                share_devices=1 ;;
-            --debug-command)
-                debug_command=1 ;;
-            -*)
-                die "unrecognized argument: $1" ;;
-            *)
-                if [ -z "${spawn_image-}" ] && [ -z "${spawn_directory-}" ]
-                then
-                    name=${1}; shift
-                fi
-                break ;;
-        esac
-        shift
-    done
-
-    if [ "${1-}" ] && [ "${1}" != "${1#-}" ]; then
-        while [ $# -gt 0 ]; do
-            case $1 in
-                --) shift; break ;;
-                 *) spawn_args=${spawn_args-}${S}${1} ;;
-            esac
-            shift
-        done
-    fi
-
-    while [ $# -gt 0 ]; do
-        spawn_command=${spawn_command-}${S}${1}
-        shift
-    done
-
-    case ${spawn_mode-} in
-        nspawn)
-            : ${spawn_dir=$name} ;;
-        docker)
-            : ${spawn_image=$name} ;;
-        '')
-            if [ "${spawn_image-}" ]; then
-                spawn_mode='docker'
-            elif [ "${spawn_dir-}" ]; then
-                spawn_mode='dir...'
-            elif [ -d "$name" ]; then
-                spawn_mode='dir...'
-                spawn_dir=${name}
-            else
-                spawn_mode='docker'
-                spawn_image=${name}
-            fi ;;
-    esac
-
-    if [ "$spawn_mode" = 'dir...' ]; then
-        if [ "$(command -v systemd-nspawn)" ]; then
-            spawn_mode='nspawn'
-        fi
-    fi
-
-    spawn_args=${spawn_args+${spawn_args#$S}}
-    spawn_command=${spawn_command+${spawn_command#$S}}
-    bind_dir_args=${bind_dir_args+${bind_dir_args#$FS}}
-
-    if [ "${debug_command:-}" ]; then
-        echo "spawn_image: $spawn_image"
-        echo "spawn_args: $spawn_args"
-        echo "spawn_command: $spawn_command"
-    fi
-}
-
-validate_environment() {
-    if ! $(command -v "$spawn_mode_command" >/dev/null); then
-        die "could not find the required command '$spawn_mode_command' for the selected spawn mode"
-    fi
-
-    case ${spawn_mode-} in
-        nspawn)
-            [ "${spawn_dir-}" ] ||
-                die "root directory is not specified"
-            [ -d "$spawn_dir" ] ||
-                die "the root directory '$spawn_dir' is not exists"
-            [ -f "$spawn_dir/etc/passwd" ] ||
-                die "/etc/passwd is not exists in '$spawn_dir'"
-            ;;
-    esac
+print_args() {
+    printf '<%s> ' "$@"
+    printf '\n'
 }
 
 die() {
     local sts=$?
     [ $sts = 0 ] && sts=2
-    [ $# = 0 ] || echo $program_name error: $* >&3
+    [ $# = 0 ] || echo $program_name: $* >&3
     exit $sts
 }
 
@@ -273,90 +46,84 @@ warn() {
     echo "$program_name warning: $*"
 }
 
-su_run() {
-    if [ "${euid:?}" = "0" ]; then
-        $E "$@"
-    else
-        if [ -t 0 ]; then
-            $E sudo "$@"
-        else
-            $E sudo -A "$@"
-        fi
-    fi
+get_host_xdg_runtime_dir() {
+    echo "${XDG_RUNTIME_DIR:-/run/user/${host_uid}}"
 }
 
-is_number() {
-    case $1 in
-        ''|*[!0-9]*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
-
-escape_quote() {
-    local arg= result=
-    for arg; do
-        arg=$(printf "%s" "$arg" | sed "s/'/'\\\''/g")
-        result="$result${S}$arg"
-    done
-    result=${result#${S}}
-    printf '%s' "$result"
-}
-
-docker_image_exists() {
-    [ "$(command -v docker)" ] || return
-    # it seems like the image name could be basically anything, some scripts
-    # create images which look like hostnames, so any heuristic here is futile
-    docker images --format '{{.Repository}}' | grep -q "^${1}$" ||
-        docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${1}$"
-}
-
-find_passwd_user_info() {
-    local passwd="${1}" field="${2}" user="${3}"
-    [ -f "${passwd}" ] || return
-    while IFS=: read -r name pass uid gid gecos home shell; do
-        if is_number "$user" && [ "$user" = "$uid" ] ||
-           [ "$user" = "$name" ]
-        then
-            eval "echo \$$field"
-            break
-        fi
-    done < "$passwd"
-}
-
-find_user_info() {
-    local field="${1}" user_arg="${2}" group_arg="${3-}"
-    case $user_arg in
-        0|root)
-            case $field in
-                name) echo root ;;
-                 uid) echo 0 ;;
-                 gid) echo 0 ;;
-                home) echo /root ;;
-            esac ;;
-        *)
-            if [ "${spawn_dir-}" ]; then
-                find_passwd_user_info "${spawn_dir}/etc/passwd" "$field" "$user_arg"
-            else
-                case $field in
-                    name) is_number "$user_arg" || echo "$user_arg" ;;
-                     uid) is_number "$user_arg" && echo "$user_arg" ;;
-                     gid) is_number "$group_arg" && echo "$group_arg" ;;
-                    home) is_number "$user_arg" || echo "/home/$user_arg" ;;
-                esac
-            fi ;;
-    esac
+get_target_xdg_runtime_dir() {
+    echo "/run/user/${target_uid}"
 }
 
 get_host_xdg_config_dir() {
     echo "${XDG_CONFIG_HOME:-${HOME:?}/.config}${1:+/$1}"
 }
 
-get_host_xdg_runtime_dir() {
-    echo "${XDG_RUNTIME_DIR:-/run/user/${host_user_uid}}"
+setup_devices() {
+    if [ "${with_gpu-}" ]; then
+        echo "'--device=/dev/dri'"
+    fi
 }
 
-get_target_xdg_runtime_dir() {
-    echo "/run/user/${spawn_user_uid}"
+setup_user() {
+    local target_home_dir
+
+    if [ "${spawn_as_user-}" ]; then
+        echo "'--user=${spawn_as_user}'"
+    fi
+
+    if [ "${spawn_home_dir-}" ]; then
+        target_home_dir="/home/$spawn_user"
+        echo "'--volume=$spawn_home_dir:$target_home_dir'"
+    fi
+
+    if [ "${spawn_user-}" ]; then
+        echo "'--env=HOME=/home/$spawn_user'"
+    fi
+}
+
+setup_bind_dirs() {
+    [ "${spawn_bind_dirs-}" ] || return 0
+
+    local IFS="$S"
+
+    set -- $spawn_bind_dirs
+
+    for dir; do
+        echo "'--volume=$dir:$dir'"
+    done
+}
+
+setup_runtime_dir() {
+    [ "${spawn_runtime_dir-}" ] || return 0
+
+    echo "'--volume=$spawn_runtime_dir:$target_runtime_dir'"
+    echo "'--env=XDG_RUNTIME_DIR=$target_runtime_dir'"
+}
+
+extract_xauth() {
+    # Use wildcard authentication family because hostname of container can
+    # differ from the host and default Xauthority files are hostname specific.
+    # See http://stackoverflow.com/a/25280523 for details.
+    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
+}
+
+setup_x11() {
+    local xauth_file xsock_file
+
+    [ "${with_x11-}" ] || return 0
+
+    xauth_file="$spawn_runtime_dir/Xauthority"
+
+    touch "$xauth_file"
+    extract_xauth "$xauth_file"
+    chmod 666 "$xauth_file"
+
+    xsock_file="$xsock_dir/X${DISPLAY#:}"
+
+    echo "'--volume=$xsock_file:$xsock_file'"
+
+    echo "'--env=DISPLAY=$DISPLAY'"
+    echo "'--env=XAUTHORITY=$target_runtime_dir/Xauthority'"
 }
 
 get_pa_socket() {
@@ -367,201 +134,8 @@ get_pa_socket() {
     fi
 }
 
-get_command() {
-    local IFS="$S" cd_cmd
-    if [ "${spawn_wd-}" ]; then
-        cd_cmd="cd \"$(escape_quote "$spawn_wd")\""
-    else
-        cd_cmd="cd"
-    fi
-    if [ -z "${spawn_command-}" ]; then
-        spawn_command="exec${S}/bin/bash${S}-l"
-    fi
-    cat <<EOF
-/bin/sh -c 'IFS=$(printf \"\\t\"); cmd="$(escape_quote "$spawn_command")"; $cd_cmd && \$cmd'
-EOF
-}
-
-add_user_arg() {
-    local _A=
-
-    [ "${spawn_user_arg-}" ] || return 0
-
-    case $spawn_mode in
-        nspawn|docker)
-            _A="--user=$spawn_user_arg" ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$_A\""
-}
-
-make_env_arg() {
-    local value="$1"
-    case $spawn_mode in
-        nspawn) echo "--setenv=$value" ;;
-        docker) echo "--env=$value" ;;
-    esac
-}
-
-make_bind_arg() {
-    local from="${1}" to="${2}" opt="${3-}" value
-    value=${from}:${to}${opt:+:$opt}
-    case $spawn_mode in
-        nspawn) echo "--bind=$value" ;;
-        docker) echo "--volume=$value" ;;
-    esac
-}
-
-setup_caps() {
-    local _A=
-
-    if [ "${spawn_cap_admin:-}" ]; then
-        _A="$_A$S--cap-add=SYS_ADMIN"
-    fi
-
-    eval "${1}=\"\$${1}$S$_A\""
-}
-
-setup_devices() {
-    local _A=
-
-    if [ "${share_gpu:-}" ]; then
-        _A="$_A$S--device=/dev/dri/card0"
-    fi
-
-    eval "${1}=\"\$${1}$S$_A\""
-}
-
-setup_runtime_env() {
-    local _A= uid= gid= runtime_dir=
-
-    [ -z "${with_ssh_agent-}"  ] &&
-    [ -z "${with_x11-}"        ] &&
-    [ -z "${with_pulseaudio-}" ] &&
-        return 0
-
-    runtime_dir=$(get_host_xdg_runtime_dir)
-
-    target_runtime_dir=$(get_target_xdg_runtime_dir)
-    spawn_runtime_dir=$(mktemp -dp "/tmp" spawn.XXXXXXXXXX)
-
-    case $spawn_mode in
-        *)
-            _A="$_A$S$(make_bind_arg "$spawn_runtime_dir" "$target_runtime_dir")"
-            ;;
-
-    esac
-
-    _A="$_A$S$(make_env_arg "XDG_RUNTIME_DIR=$target_runtime_dir")"
-
-    eval "${1}=\"\$${1}$S$_A\""
-}
-
-setup_system_env() {
-    local SYS_A=
-
-    case $spawn_mode in
-        nspawn)
-            SYS_A="$SYS_A$S$(make_bind_arg "/etc/resolv.conf" "/etc/resolv.conf")"
-            ;;
-    esac
-
-    if [ -f /etc/localtime ]; then
-        case $spawn_mode in
-            nspawn)
-                SYS_A="$SYS_A$S$(make_bind_arg "/etc/localtime" "/etc/localtime")"
-                ;;
-        esac
-    fi
-
-    eval "${1}=\"\$${1}$S$SYS_A\""
-}
-
-setup_ssh_agent_env() {
-    local SSH_A= uid=
-
-    [ "${with_ssh_agent-}" ] || return 0
-
-    [ "${SSH_AUTH_SOCK-}" ] ||
-        die "passing of SSH agent is enabled but SSH_AUTH_SOCK is not set"
-    [ -S "$SSH_AUTH_SOCK" ] ||
-        die "$SSH_AUTH_SOCK socket is not exists or is not a socket"
-
-    uid=$spawn_user_uid
-
-    SSH_A="$SSH_A$S$(make_env_arg "SSH_AUTH_SOCK=$target_runtime_dir/ssh")"
-
-    case $spawn_mode in
-        *)
-            SSH_A="$SSH_A$S$(make_bind_arg "$SSH_AUTH_SOCK" "$target_runtime_dir/ssh")"
-            ;;
-    esac
-
-    if [ "${euid:?}" != "$uid" ]; then
-        warn "the current effective user ID ($euid) does not match the user \
-ID inside the container ($uid) but SSH agent socket sharing is requested -- \
-changing $SSH_AUTH_SOCK mode to world writeable/readable (666)"
-        chmod 666 "$SSH_AUTH_SOCK"
-    fi
-
-    eval "${1}=\"\$${1}$S$SSH_A\""
-}
-
-setup_ssh_dir_env() {
-    local SSH_A= uid=
-
-    [ "${with_ssh_dir-}" ] || return 0
-
-    [ "${spawn_home-}" ] ||
-        die "unable to automatically determine user's home directory inside the \
-spawned container to map the .ssh directory, please specify username with the \
---user option"
-
-    case $spawn_mode in
-        docker)
-            SSH_A="$SSH_A$S$(make_bind_arg "$HOME/.ssh" "$spawn_home/.ssh")"
-            ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$SSH_A\""
-}
-
-setup_x11_env() {
-    local X11_A= xauth_file= xsock_file=
-
-    [ "${with_x11-}" ] || return 0
-
-    [ "${DISPLAY-}" ] ||
-        die "passing of X11 environment is enabled but DISPLAY is not set"
-    [ -d "$xsock_dir" ] ||
-        die "X11 socket directory '$xsock_dir' is not exists"
-
-    # disable Qt's usage of shared memory when not sharing IPC
-    if [ -z "${share_ipc:-}" ]; then
-        X11_A="$X11_A$S$(make_env_arg QT_X11_NO_MITSHM=1)"
-    fi
-
-    xauth_file="$spawn_runtime_dir/Xauthority"
-    touch "$xauth_file"
-    extract_xauth "$xauth_file"
-    chmod 666 "$xauth_file"
-
-    X11_A="$X11_A$S$(make_env_arg "DISPLAY=$DISPLAY")"
-    X11_A="$X11_A$S$(make_env_arg "XAUTHORITY=$target_runtime_dir/Xauthority")"
-
-    xsock_file="$xsock_dir/X${DISPLAY#:}"
-
-    case $spawn_mode in
-        *)
-            X11_A="$X11_A$S$(make_bind_arg "$xsock_file" "$xsock_file")"
-            ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$X11_A\""
-}
-
-setup_pa_env() {
-    local PA_A= sock_file= cookie_file=
+setup_pulseaudio() {
+    local sock_file cookie_file
 
     [ "${with_pulseaudio-}" ] || return 0
 
@@ -573,140 +147,66 @@ setup_pa_env() {
         die "PulseAudio socket '$sock_file' is not exists or is not a socket"
 
     cookie_file=$(get_host_xdg_config_dir pulse)/cookie
+
     [ -f "$cookie_file" ] ||
         die "PulseAudio cookie file '$cookie_file' is not found"
+
     cp "$cookie_file" "$spawn_runtime_dir/pulse_cookie"
     chmod 666 "$spawn_runtime_dir/pulse_cookie"
 
-    PA_A="$PA_A$S$(make_env_arg "PULSE_SERVER=$target_runtime_dir/pulse_sock")"
-    PA_A="$PA_A$S$(make_env_arg "PULSE_COOKIE=$target_runtime_dir/pulse_cookie")"
+    echo "'--volume=$sock_file:$target_runtime_dir/pulse_sock'"
 
-    case $spawn_mode in
-        *)
-            PA_A="$PA_A$S$(make_bind_arg "$sock_file" "$target_runtime_dir/pulse_sock")"
-            ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$PA_A\""
+    echo "'--env=PULSE_SERVER=$target_runtime_dir/pulse_sock'"
+    echo "'--env=PULSE_COOKIE=$target_runtime_dir/pulse_cookie'"
 }
 
-setup_home_env() {
-    local HOME_A= src= dest=
+setup_keepassxc() {
+    local sock_name sock_path
 
-    [ "${bind_home-}"  ] || return 0
+    [ "${with_keepassxc-}" ] || return 0
 
-    src=${bind_home%:*}
-    if [ "$src" != "$bind_home" ]; then
-        dest=${bind_home#*:}
-    fi
-    : ${dest:=$spawn_home}
+    sock_name=org.keepassxc.KeePassXC.BrowserServer
+    sock_path="app/org.keepassxc.KeePassXC/$sock_name"
 
-    [ -d "$src" ] ||
-        die "the source directory to bind home does not exist: $src"
-    if [ -z "$dest" ]; then
-        if [ "$spawn_mode" = "docker" ]; then
-            die "could not find home directory to bind to: please specify a \
-user existing inside the container by name"
-        else
-            die "failed to find home directory for user: $spawn_user_arg"
-        fi
-    fi
+    [ -S "$host_runtime_dir/$sock_path" ] || return 0
 
-    case $spawn_mode in
-        *)
-            HOME_A="$HOME_A$S$(make_bind_arg "$src" "$dest")"
-            ;;
-    esac
-
-    eval "${1}=\"\$${1}$S$HOME_A\""
-}
-
-setup_bind_env() {
-    local IFS="$S" OUT_A="$1" BIND_A= from to opt
-
-    [ "${bind_dir_args-}" ] || return 0
-
-    bind_dir_args=$(echo "$bind_dir_args" | sed "s|\\\\:|$Q|g")
-    while IFS=: read from to opt; do
-        from=$(echo "$from" | sed "s|$Q|\\\\:|g")
-        to=$(echo "$to" | sed "s|$Q|\\\\:|g")
-        to=${to:-$from}
-        : ${spawn_wd:=$(eval echo "$to")}
-        case $spawn_mode in
-            *)
-                BIND_A="$BIND_A$S$(make_bind_arg "$from" "$to" "${opt-}")"
-                ;;
-        esac
-    done <<EOF
-${bind_dir_args-}
-EOF
-
-    if [ "${to-}" ]; then
-        BIND_A="$BIND_A$S$(make_env_arg "WD=$to")"
-    fi
-
-    eval "${OUT_A}=\"\$${OUT_A}$S$BIND_A\""
-}
-
-setup_env() {
-    add_user_arg        "$1"
-    setup_caps          "$1"
-    setup_devices       "$1"
-    setup_runtime_env   "$1"
-    setup_system_env    "$1"
-    setup_ssh_agent_env "$1"
-    setup_ssh_dir_env   "$1"
-    setup_x11_env       "$1"
-    setup_pa_env        "$1"
-    setup_home_env      "$1"
-    setup_bind_env      "$1"
-}
-
-extract_xauth() {
-    # Use wildcard authentication family because hostname of container can
-    # differ from the host and default Xauthority files are hostname specific.
-    # See http://stackoverflow.com/a/25280523 for details.
-    xauth nlist "$DISPLAY" | sed 's/^..../ffff/' | xauth -f "$1" nmerge -
+    echo "--volume=$host_runtime_dir/$sock_path:$target_runtime_dir/$sock_path"
 }
 
 cleanup() {
-    if [ "${spawn_runtime_dir-}" ]; then
+    if [ "$spawn_runtime_dir" ]; then
         rm -rf "$spawn_runtime_dir"
     fi
 }
 
-spawn_root_nspawn() {
-    local IFS="$S" A=
+run_container() {
+    local host_runtime_dir target_runtime_dir
+    local run_interactive  run_tty
 
-    trap cleanup EXIT
-
-    # systemd-nspawn runs 'getent passwd <user>' inside the container to get
-    # passwd entry for the user or fails with "Failed to resolve user <user>"
-
-    setup_env A
-
-    $E su_run systemd-nspawn $A ${spawn_args-} -D "$spawn_dir" -- /bin/sh -c "exec $(get_command)"
-}
-
-spawn_using_docker() {
-    local IFS="$S" A= it_arg= cmd=
-
-    trap cleanup EXIT
-
-    setup_env A
-
-    if [ -t 1 ]; then
-        it_arg='-it'
+    if [ "${spawn_need_runtime_dir-}" ]; then
+        host_runtime_dir=$(get_host_xdg_runtime_dir)
+        target_runtime_dir=$(get_target_xdg_runtime_dir)
+        spawn_runtime_dir=$(mktemp -dp "$host_runtime_dir" spawn.XXXXXXXXXX)
+        trap cleanup EXIT
     fi
 
-    $E $spawn_mode_command run --rm $it_arg \
-        ${spawn_name:+--name=${spawn_name}} \
-        ${share_ipc:+--ipc=host} \
-        ${share_devices:+--privileged} \
-        $A \
-        ${spawn_args-} \
-        "${spawn_image}" \
-        $spawn_command
+    if [ -t 1 ]; then
+        run_interactive=1
+        run_tty=1
+    fi
+
+    eval ${E-} $spawn_mode run --rm           \
+        ${run_interactive:+--interactive}     \
+        ${run_tty:+--tty}                     \
+        ${spawn_name:+--name="'$spawn_name'"} \
+        $(setup_devices)                      \
+        $(setup_user)                         \
+        $(setup_bind_dirs)                    \
+        $(setup_runtime_dir)                  \
+        $(setup_x11)                          \
+        $(setup_pulseaudio)                   \
+        $(setup_keepassxc)                    \
+        "$@"
 }
 
 if [ $# = 0 ]; then
@@ -714,53 +214,75 @@ if [ $# = 0 ]; then
     exit 0
 fi
 
-parse_command_line "$@"
+options=$(getopt \
+    -n "$program_name" \
+    -o 'hn' \
+    -l 'help' \
+    -l 'using-docker' \
+    -l 'using-podman' \
+    -l 'name:' \
+    -l 'user:' \
+    -l 'as-root' \
+    -l 'bind:' \
+    -l 'bind-home:' \
+    -l 'with-gpu' \
+    -l 'with-x11' \
+    -l 'with-pulseaudio' \
+    -l 'with-keepassxc' \
+    -- \
+    "$@")
 
-spawn_mode_command=$spawn_mode
-case ${spawn_mode-} in
-    docker)
-        case ${spawn_type-} in
-            podman) spawn_mode_command=podman ;;
-                 *) spawn_mode_command=docker ;;
-        esac ;;
-    nspawn)
-        spawn_mode_command=systemd-nspawn ;;
-esac
+eval set -- "$options"
 
-validate_environment
+spawn_bind_dirs=
 
-euid=${UID:-$(id -u)}
+while [ $# -gt 0 ]; do
+    case $1 in
+        --) shift; break ;;
+        -h|--help) show_usage; exit ;;
+        -n|--dry-run) E='echo' ;;
+        --using-docker)
+            spawn_mode='docker' ;;
+        --using-podman)
+            spawn_mode='podman' ;;
+        --name)
+            spawn_name=${2-}
+            shift ;;
+        --as-root)
+            spawn_as_user='root' ;;
+        --user)
+            spawn_user=${2-}
+            shift ;;
+        --bind)
+            spawn_bind_dirs="${spawn_bind_dirs}${S}${2}"
+            shift ;;
+        --bind-home)
+            spawn_home_dir="${2-}"
+            shift ;;
+        --with-gpu)
+            with_gpu=1 ;;
+        --with-x11)
+            spawn_need_runtime_dir=1
+            with_x11=1 ;;
+        --with-pulseaudio)
+            spawn_need_runtime_dir=1
+            with_pulseaudio=1 ;;
+        --with-keepassxc)
+            spawn_need_runtime_dir=1
+            with_keepassxc=1 ;;
+        *) break ;;
+    esac
+    shift
+done
 
-host_user_name=$(id -un)
-host_user_uid=$(id -u)
-host_user_gid=$(id -g)
-host_user_home=${HOME-}
+spawn_bind_dirs=${spawn_bind_dirs#$S}
 
-if [ "${spawn_user_arg:-}" ]; then
-# read does not read from a pipe because it can be in a subshell
-IFS=: read spawn_uid_arg spawn_gid_arg <<EOF
-$spawn_user_arg
-EOF
+: ${spawn_mode:=docker}
 
-spawn_user_name=$(find_user_info name "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_user_uid=$(find_user_info uid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_user_gid=$(find_user_info gid "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-spawn_home=$(find_user_info home "$spawn_uid_arg" "${spawn_gid_arg-}") || true
-fi
+host_uid=$(id -u)
+target_uid=$host_uid
 
-: ${spawn_user_name:=$(id -un)}
-: ${spawn_user_uid:=$(id -u)}
-: ${spawn_user_gid:=$(id -g)}
-: ${spawn_home:=${HOME-}}
+[ "${spawn_home_dir-}" -a -z "${spawn_user-}" ] &&
+    die "option '--bind-home' requires '--user'"
 
-if [ "${to_stderr-}" ]; then
-    exec 1>&2
-fi
-
-case $spawn_mode in
-    docker) spawn_using_docker ;;
-    nspawn)
-        if [ "${spawn_dir-}" ]; then
-            spawn_root_nspawn
-        fi ;;
-esac
+run_container "$@"
