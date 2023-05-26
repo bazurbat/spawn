@@ -31,6 +31,7 @@ Usage: spawn [OPTIONS...] <image> [COMMAND [ARGS...]]
   --with-pulseaudio     Share host's PulseAudio socket and cookie
   --with-keepassxc      Share host's KeePassXC socket
   --with-secret <spec>  Export secrets from Secret Storage
+  --with-certs <name>   Export certificates from trust store as <name>
 
   The <spec> argument to '--with-secret' should have the format:
 

@@ -28,6 +28,7 @@ Usage: $program_name [OPTIONS...] <image> [COMMAND [ARGS...]]
   --with-pulseaudio     Share host's PulseAudio socket and cookie
   --with-keepassxc      Share host's KeePassXC socket
   --with-secret <spec>  Export secrets from Secret Storage
+  --with-certs <name>   Export certificates from trust store as <name>
 
   The <spec> argument to '--with-secret' should have the format:
 
@@ -88,6 +89,13 @@ fetch_secrets() {
         [ "$secret" ] ||
             die "could not find matching secret for '$name'"
     done
+}
+
+fetch_certs() {
+    local IFS=${US}
+    local secrets_dir="$1"
+
+    trust extract --format=pem-bundle "$secrets_dir/$with_certs"
 }
 
 setup_devices() {
@@ -235,7 +243,12 @@ run_container() {
 
     if [ "${spawn_need_secrets_dir-}" ]; then
         spawn_secrets_dir=$(mktemp -dp "$host_runtime_dir" spawn.XXXXXXXXXX)
-        fetch_secrets "$spawn_secrets_dir"
+        if [ "${arg_secrets-}" ]; then
+            fetch_secrets "$spawn_secrets_dir"
+        fi
+        if [ "${with_certs-}" ]; then
+            fetch_certs "$spawn_secrets_dir"
+        fi
     fi
 
     if [ -t 1 ]; then
@@ -279,12 +292,14 @@ options=$(getopt \
     -l 'with-pulseaudio' \
     -l 'with-keepassxc' \
     -l 'with-secret:' \
+    -l 'with-certs:' \
     -- \
     "$@")
 
 eval set -- "$options"
 
 spawn_bind_dirs=
+arg_secrets=
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -324,6 +339,10 @@ while [ $# -gt 0 ]; do
             spawn_need_secrets_dir=1
             arg_secrets="${arg_secrets-}${US}${2}"
             shift ;;
+        --with-certs)
+            spawn_need_secrets_dir=1
+            with_certs=${2-}
+            shift ;;
         *) break ;;
     esac
     shift
@@ -344,6 +363,12 @@ if [ "${arg_secrets}" ]; then
     secret_tool=$(command -v secret-tool) || true
     [ "${secret_tool-}" ] ||
         die "secret-tool is required to fetch secrets"
+fi
+
+if [ "${arg_certs-}" ]; then
+    cert_tool=$(command -v trust) || true
+    [ "${cert_tool}" ] ||
+        die "trust command (p11-kit) is required to fetch certificates"
 fi
 
 run_container "$@"
