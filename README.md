@@ -9,6 +9,8 @@ Features:
   * Share host's GPU (/dev/dri)
   * Share host's X11, PulseAudio and KeePassXC sockets
   * Convenience shortcuts to bind host's directories
+  * Fetches secrets from user's Secret Storage and exports to /run/secrets
+    inside the container.
 
 ## Options
 
@@ -28,5 +30,14 @@ Usage: spawn [OPTIONS...] <image> [COMMAND [ARGS...]]
   --with-x11            Share host's X11 socket and pass Xauthority
   --with-pulseaudio     Share host's PulseAudio socket and cookie
   --with-keepassxc      Share host's KeePassXC socket
+  --with-secret <spec>  Export secrets from Secret Storage
+
+  The <spec> argument to '--with-secret' should have the format:
+
+      name: attribute value [attribute value]...
+
+  The script will lookup a secret matching the specified attribute values using
+  secret-tool and mount it as the /run/secrets/<name> inside the container. The
+  colon after the name is optional.
 
 ```

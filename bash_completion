@@ -26,10 +26,11 @@ _spawn_complete() {
         --with-x11
         --with-pulseaudio
         --with-keepassxc
+        --with-secret
     )
 
     case $prev in
-        --name|--user)
+        --name|--user|--with-secret)
             COMPREPLY=()
             return ;;
         --bind|--bind-home)

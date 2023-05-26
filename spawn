@@ -6,6 +6,7 @@ program_name="spawn"
 xsock_dir='/tmp/.X11-unix'
 
 S=$(printf '\t')
+US=$(printf '\x1f')
 
 exec 3>&2
 
@@ -26,6 +27,15 @@ Usage: $program_name [OPTIONS...] <image> [COMMAND [ARGS...]]
   --with-x11            Share host's X11 socket and pass Xauthority
   --with-pulseaudio     Share host's PulseAudio socket and cookie
   --with-keepassxc      Share host's KeePassXC socket
+  --with-secret <spec>  Export secrets from Secret Storage
+
+  The <spec> argument to '--with-secret' should have the format:
+
+      name: attribute value [attribute value]...
+
+  The script will lookup a secret matching the specified attribute values using
+  secret-tool and mount it as the /run/secrets/<name> inside the container. The
+  colon after the name is optional.
 
 EOF
 }
@@ -56,6 +66,28 @@ get_target_xdg_runtime_dir() {
 
 get_host_xdg_config_dir() {
     echo "${XDG_CONFIG_HOME:-${HOME:?}/.config}${1:+/$1}"
+}
+
+lookup_secret() {
+    $secret_tool lookup "$@"
+}
+
+fetch_secrets() {
+    local IFS=${US}
+    local secrets_dir="$1"
+    local arg name path secret
+
+    for arg in $arg_secrets; do
+        eval set -- "$arg"
+        name=${1}
+        name=$(echo "$name" | sed 's/:$//')
+        shift
+        path="$secrets_dir/$name"
+        lookup_secret "$@" > "$path" || true
+        secret=$(cat "$path")
+        [ "$secret" ] ||
+            die "could not find matching secret for '$name'"
+    done
 }
 
 setup_devices() {
@@ -98,6 +130,12 @@ setup_runtime_dir() {
 
     echo "'--volume=$spawn_runtime_dir:$target_runtime_dir'"
     echo "'--env=XDG_RUNTIME_DIR=$target_runtime_dir'"
+}
+
+setup_secrets_dir() {
+    [ "${spawn_secrets_dir-}" ] || return 0
+
+    echo "'--volume=$spawn_secrets_dir:/run/secrets'"
 }
 
 extract_xauth() {
@@ -174,8 +212,11 @@ setup_keepassxc() {
 }
 
 cleanup() {
-    if [ "$spawn_runtime_dir" ]; then
+    if [ "${spawn_runtime_dir-}" ]; then
         rm -rf "$spawn_runtime_dir"
+    fi
+    if [ "${spawn_secrets_dir-}" ]; then
+        rm -rf "$spawn_secrets_dir"
     fi
 }
 
@@ -183,11 +224,18 @@ run_container() {
     local host_runtime_dir target_runtime_dir
     local run_interactive  run_tty
 
+    trap cleanup EXIT
+
+    host_runtime_dir=$(get_host_xdg_runtime_dir)
+
     if [ "${spawn_need_runtime_dir-}" ]; then
-        host_runtime_dir=$(get_host_xdg_runtime_dir)
         target_runtime_dir=$(get_target_xdg_runtime_dir)
         spawn_runtime_dir=$(mktemp -dp "$host_runtime_dir" spawn.XXXXXXXXXX)
-        trap cleanup EXIT
+    fi
+
+    if [ "${spawn_need_secrets_dir-}" ]; then
+        spawn_secrets_dir=$(mktemp -dp "$host_runtime_dir" spawn.XXXXXXXXXX)
+        fetch_secrets "$spawn_secrets_dir"
     fi
 
     if [ -t 1 ]; then
@@ -203,6 +251,7 @@ run_container() {
         $(setup_user)                         \
         $(setup_bind_dirs)                    \
         $(setup_runtime_dir)                  \
+        $(setup_secrets_dir)                  \
         $(setup_x11)                          \
         $(setup_pulseaudio)                   \
         $(setup_keepassxc)                    \
@@ -229,6 +278,7 @@ options=$(getopt \
     -l 'with-x11' \
     -l 'with-pulseaudio' \
     -l 'with-keepassxc' \
+    -l 'with-secret:' \
     -- \
     "$@")
 
@@ -270,12 +320,17 @@ while [ $# -gt 0 ]; do
         --with-keepassxc)
             spawn_need_runtime_dir=1
             with_keepassxc=1 ;;
+        --with-secret)
+            spawn_need_secrets_dir=1
+            arg_secrets="${arg_secrets-}${US}${2}"
+            shift ;;
         *) break ;;
     esac
     shift
 done
 
 spawn_bind_dirs=${spawn_bind_dirs#$S}
+arg_secrets=${arg_secrets#$US}
 
 : ${spawn_mode:=docker}
 
@@ -284,5 +339,11 @@ target_uid=$host_uid
 
 [ "${spawn_home_dir-}" -a -z "${spawn_user-}" ] &&
     die "option '--bind-home' requires '--user'"
+
+if [ "${arg_secrets}" ]; then
+    secret_tool=$(command -v secret-tool) || true
+    [ "${secret_tool-}" ] ||
+        die "secret-tool is required to fetch secrets"
+fi
 
 run_container "$@"
